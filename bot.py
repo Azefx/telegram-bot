@@ -8,13 +8,13 @@ from telethon.sessions import StringSession
 from telethon.tl.types import InputPeerEmpty, Channel, Chat, LabeledPrice
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
-SOURCE_NAME = "Azef"
+SOURCE_NAME = "Programmer Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك انت
-MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية - سيبه فاضي لو مش عايز
+DEVELOPER_USERNAME = "Devazf"
+MANDATORY_CHANNEL = "Spraize"
 
 bot = None
 conn = None
@@ -24,7 +24,6 @@ temp_data = {}
 broadcast_tasks = {}
 TEMP_MEDIA = {}
 
-# باقات النجوم
 STAR_PACKAGES = {
     '7_days': {'days': 7, 'stars': 50, 'label': '7 أيام'},
     '15_days': {'days': 15, 'stars': 100, 'label': '15 يوم'},
@@ -77,19 +76,16 @@ def is_vip(user_id):
     if not expires:
         return False
     is_trial = row[1]
-
     if expires <= datetime.now() and is_trial == 1:
         c.execute("UPDATE users SET is_vip=0, vip_expires=NULL, is_trial=0 WHERE user_id=?", (user_id,))
         conn.commit()
         return False
-
     return expires > datetime.now()
 
 def create_user(user_id, username):
     c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
     is_new = not c.fetchone()
     c.execute("INSERT OR IGNORE INTO users (user_id, username, joined_at) VALUES (?,?,?)", (user_id, username, datetime.now().isoformat()))
-
     if is_new and not is_admin(user_id):
         expires = datetime.now() + timedelta(hours=1)
         c.execute("UPDATE users SET is_vip=1, vip_expires=?, is_trial=1 WHERE user_id=?", (expires.isoformat(), user_id))
@@ -206,23 +202,19 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
     total_sent = 0
     total_failed = 0
     await bot.send_message(user_id, f"🚀 **بدأت الحملة - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
-
     for acc in accounts:
         if broadcast_tasks.get(user_id)!= asyncio.current_task():
             break
         acc_id, _, session_string, phone, username, _, _, _, _ = acc
         client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
         account_stopped = False
-
         try:
             await client.start()
             groups = await get_all_groups(client)
             await bot.send_message(user_id, f"📱 {phone or username}\n📊 لقيت {len(groups)} جروب")
-
             for group in groups:
                 if broadcast_tasks.get(user_id)!= asyncio.current_task():
                     break
-
                 try:
                     if media_id:
                         await client.send_file(group, media_id, caption=content, parse_mode='md')
@@ -232,34 +224,27 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
                     update_campaign_stats(campaign_id, 1, 0)
                     sleep_time = random.randint(delay_min, delay_max)
                     await asyncio.sleep(sleep_time)
-
                 except FloodWaitError as e:
                     await bot.send_message(user_id, f"🛑 **{phone} خد فلود {e.seconds}ث**\n⏸️ بوقف الحساب ده وبكمل باللي بعده")
                     set_account_flood(acc_id, e.seconds)
                     account_stopped = True
                     break
-
                 except (ChatWriteForbiddenError, UserBannedInChannelError, SlowModeWaitError):
                     total_failed += 1
                     update_campaign_stats(campaign_id, 0, 1)
-
                 except Exception:
                     total_failed += 1
                     update_campaign_stats(campaign_id, 0, 1)
                     await asyncio.sleep(5)
-
             if not account_stopped:
                 c.execute("UPDATE accounts SET last_used=?, groups_count=? WHERE id=?", (datetime.now().isoformat(), len(groups), acc_id))
                 conn.commit()
-
         except Exception as e:
             await bot.send_message(user_id, f"❌ خطأ في {phone}: {str(e)}")
         finally:
             await client.disconnect()
-
         if not account_stopped:
             await asyncio.sleep(random.randint(30, 60))
-
     await bot.send_message(user_id, f"✅ **انتهت الحملة - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
     stop_campaign(campaign_id)
     if user_id in broadcast_tasks:
@@ -304,33 +289,27 @@ def setup_handlers():
         user_id = event.sender_id
         username = event.sender.username or f"user{user_id}"
         is_new = create_user(user_id, username)
-
         if not await check_subscription(user_id):
             await event.reply(f"🚫 **أهلاً بيك في {SOURCE_NAME}**\n\nعشان تستخدم البوت لازم تشترك في القناة الرسمية الأول:", buttons=[
                 [Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')],
                 [Button.inline('✅ تحققت من الاشتراك', 'check_sub')]
             ])
             return
-
         if is_new:
             await bot.send_message(int(ADMIN_ID), f"🆕 **يوزر جديد دخل {SOURCE_NAME}**\n\nID: `{user_id}`\nUsername: @{username}\n\n🎁 تم تفعيل تجربة مجانية ساعة")
-
         if not is_vip(user_id):
             await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ انتهت تجربتك المجانية\n\n⭐ اشترك بالنجوم أو راسل المطور", buttons=main_keyboard(user_id))
             return
-
         c.execute("SELECT vip_expires, is_trial FROM users WHERE user_id=?", (user_id,))
         row = c.fetchone()
         exp = safe_parse_date(row[0])
         is_trial = row[1]
         accounts = get_user_accounts(user_id)
-
         trial_text = ""
         if is_trial == 1 and exp:
             remaining = exp - datetime.now()
             minutes = int(remaining.total_seconds() / 60)
             trial_text = f"\n\n🎁 **تجربة مجانية**: فاضل {minutes} دقيقة"
-
         await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d %H:%M') if exp else 'غير محدد'}{trial_text}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
 
     @bot.on(events.NewMessage(pattern='/activate'))
@@ -407,18 +386,15 @@ def setup_handlers():
         user_id = event.sender_id
         data = event.data.decode('utf-8')
         create_user(user_id, event.sender.username or f"user{user_id}")
-
         if data == 'check_sub':
             if await check_subscription(user_id):
                 await event.edit("✅ **تمام! تم التحقق من اشتراكك**\n\nدوس /start عشان تبدأ")
             else:
                 await event.answer("❌ لسه مش مشترك في القناة", alert=True)
             return
-
         if not await check_subscription(user_id):
             await event.answer("🚫 لازم تشترك في القناة الأول", alert=True)
             return
-
         if data == 'contact_admin':
             await event.answer("كلم الأدمن للتفعيل", alert=True)
             return
@@ -598,7 +574,6 @@ def setup_handlers():
         user_id = event.sender_id
         payment = event.successful_payment
         payload = payment.invoice_payload
-
         try:
             parts = payload.split('_')
             package_key = f"{parts[1]}_{parts[2]}"
@@ -613,11 +588,9 @@ def setup_handlers():
     async def handle_message(event):
         user_id = event.sender_id
         text = event.text
-
         if not await check_subscription(user_id):
             await event.reply("🚫 **لازم تشترك في القناة الأول**", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')], [Button.inline('✅ تحققت', 'check_sub')]])
             return
-
         if text == '/start' or text.startswith('/activate') or text.startswith('/save') or text.startswith('/send') or text.startswith('/list'):
             return
         if waiting_for.get(user_id) == 'post_content':
@@ -644,4 +617,25 @@ def setup_handlers():
                     return
                 data = temp_data[user_id]
                 campaign_id = create_campaign(user_id, data['post_id'], delay_min, delay_max)
-                task = asyncio.create_task(broadcast_task(user_id, campaign_id, data['post_id'],
+                task = asyncio.create_task(broadcast_task(user_id, campaign_id, data['post_id'], data['accounts'], delay_min, delay_max))
+                broadcast_tasks[user_id] = task
+                waiting_for[user_id] = None
+                temp_data.pop(user_id, None)
+            except:
+                await event.reply("❌ الصيغة غلط\nمثال: 30 120")
+        elif waiting_for.get(user_id) == 'account_phone':
+            if not text.startswith('+'):
+                await event.reply("❌ لازم يبدأ بـ +\nمثال: +201234567890")
+                return
+            waiting_for[user_id] = 'account_code'
+            temp_data[user_id] = {'phone': text}
+            client = TelegramClient(StringSession(), int(API_ID), API_HASH)
+            try:
+                await client.connect()
+                sent = await client.send_code_request(text)
+                temp_data[user_id]['client'] = client
+                temp_data[user_id]['phone_code_hash'] = sent.phone_code_hash
+                await event.reply(f"📲 اتبعت كود لـ {text}\n\nابعته هنا:")
+            except Exception as e:
+                await event.reply(f"❌ خطأ: {str(e)}")
+                waiting_for[user_id]

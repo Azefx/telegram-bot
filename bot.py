@@ -13,8 +13,8 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "YourUsername" # غير ده ليوزرك انت
-MANDATORY_CHANNEL = "@YourChannel" # غير ده ليوزر القناة الإجبارية - سيبه فاضي لو مش عايز
+DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك انت
+MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية - سيبه فاضي لو مش عايز
 
 bot = None
 conn = None

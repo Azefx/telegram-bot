@@ -175,7 +175,7 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
     content = format_post(raw_content, style, emoji)
     total_sent = 0
     total_failed = 0
-    await bot.send_message(user_id, f"🚀 **بدأت الحملة - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
+    await bot.send_message(user_id, f"🚀 **بدأ النشر - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
     for acc in accounts:
         if broadcast_tasks.get(user_id)!= asyncio.current_task():
             break
@@ -216,7 +216,7 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
         finally:
             await client.disconnect()
         await asyncio.sleep(random.randint(30, 60))
-    await bot.send_message(user_id, f"✅ **انتهت الحملة - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
+    await bot.send_message(user_id, f"✅ **تم ايقاف النشر - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
     stop_campaign(campaign_id)
     if user_id in broadcast_tasks:
         del broadcast_tasks[user_id]
@@ -225,8 +225,8 @@ def main_keyboard(user_id):
     buttons = []
     if is_vip(user_id):
         buttons.append([Button.inline('📝 إنشاء منشور', 'create_post')])
-        buttons.append([Button.inline('🚀 بدء حملة نشر', 'start_broadcast')])
-        buttons.append([Button.inline('🛑 إيقاف الحملة', 'stop_broadcast')])
+        buttons.append([Button.inline('🚀 بدء  النشر', 'start_broadcast')])
+        buttons.append([Button.inline('🛑 إيقاف النشر', 'stop_broadcast')])
         buttons.append([Button.inline('📱 إضافة حساب', 'add_account')])
         buttons.append([Button.inline('📋 حساباتي', 'my_accounts')])
     else:

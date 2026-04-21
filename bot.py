@@ -8,13 +8,13 @@ from telethon.sessions import StringSession
 from telethon.tl.types import InputPeerEmpty, Channel, Chat
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
-SOURCE_NAME = "Azef"
+SOURCE_NAME = "Source Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "YourUsername" # غير ده ليوزرك
-MANDATORY_CHANNEL = "@YourChannel" # جديد: غير ده ليوزر القناة الإجبارية
+DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك
+MANDATORY_CHANNEL = "Spraize" # جديد: غير ده ليوزر القناة الإجبارية
 
 bot = None
 conn = None

@@ -5,16 +5,16 @@ import random
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.tl.types import InputPeerEmpty, Channel, Chat
+from telethon.tl.types import InputPeerEmpty, Channel, Chat, LabeledPrice
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
-SOURCE_NAME = "Source Azef"
+SOURCE_NAME = "Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك انت
-MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية
+MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية - سيبه فاضي لو مش عايز
 
 bot = None
 conn = None
@@ -24,12 +24,19 @@ temp_data = {}
 broadcast_tasks = {}
 TEMP_MEDIA = {}
 
+# باقات النجوم
+STAR_PACKAGES = {
+    '7_days': {'days': 7, 'stars': 50, 'label': '7 أيام'},
+    '15_days': {'days': 15, 'stars': 100, 'label': '15 يوم'},
+    '30_days': {'days': 30, 'stars': 150, 'label': 'شهر كامل'}
+}
+
 def init_db():
     global conn, c
     conn = sqlite3.connect('broadcaster.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, is_vip INTEGER DEFAULT 0, vip_expires TEXT, joined_at TEXT, is_trial INTEGER DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, session_string TEXT, phone TEXT, username TEXT, is_active INTEGER DEFAULT 1, last_used TEXT, groups_count INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, session_string TEXT, phone TEXT, username TEXT, is_active INTEGER DEFAULT 1, last_used TEXT, groups_count INTEGER DEFAULT 0, flood_until TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, content TEXT, media_id TEXT, style TEXT DEFAULT 'normal', emoji TEXT, created_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, post_id INTEGER, delay_min INTEGER, delay_max INTEGER, status TEXT DEFAULT 'running', sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, started_at TEXT)''')
     conn.commit()
@@ -38,13 +45,16 @@ def safe_parse_date(date_string):
     try:
         return datetime.fromisoformat(date_string)
     except:
-        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
+        try:
+            return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
+        except:
+            return None
 
 def is_admin(user_id):
     return user_id == int(ADMIN_ID)
 
 async def check_subscription(user_id):
-    if is_admin(user_id):
+    if is_admin(user_id) or not MANDATORY_CHANNEL:
         return True
     try:
         await bot.get_permissions(MANDATORY_CHANNEL, user_id)
@@ -62,6 +72,8 @@ def is_vip(user_id):
     if not row or not row[0]:
         return False
     expires = safe_parse_date(row[0])
+    if not expires:
+        return False
     is_trial = row[1]
 
     if expires <= datetime.now() and is_trial == 1:
@@ -88,6 +100,18 @@ def add_vip(user_id, days):
     conn.commit()
     return expires
 
+def extend_vip(user_id, days):
+    c.execute("SELECT vip_expires FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    if row and row[0] and safe_parse_date(row[0]) > datetime.now():
+        current_exp = safe_parse_date(row[0])
+        new_exp = current_exp + timedelta(days=days)
+    else:
+        new_exp = datetime.now() + timedelta(days=days)
+    c.execute("UPDATE users SET is_vip=1, vip_expires=?, is_trial=0 WHERE user_id=?", (new_exp.isoformat(), user_id))
+    conn.commit()
+    return new_exp
+
 def remove_vip(user_id):
     c.execute("UPDATE users SET is_vip=0, vip_expires=NULL, is_trial=0 WHERE user_id=?", (user_id,))
     conn.commit()
@@ -101,8 +125,15 @@ def add_account(owner_id, session_string, phone, username):
     conn.commit()
 
 def get_user_accounts(user_id):
-    c.execute("SELECT * FROM accounts WHERE owner_id=? AND is_active=1 ORDER BY last_used ASC", (user_id,))
+    # هات الحسابات اللي مش في فلود بس
+    now = datetime.now().isoformat()
+    c.execute("SELECT * FROM accounts WHERE owner_id=? AND is_active=1 AND (flood_until IS NULL OR flood_until <?) ORDER BY last_used ASC", (user_id, now))
     return c.fetchall()
+
+def set_account_flood(acc_id, seconds):
+    flood_until = (datetime.now() + timedelta(seconds=seconds)).isoformat()
+    c.execute("UPDATE accounts SET flood_until=? WHERE id=?", (flood_until, acc_id))
+    conn.commit()
 
 def delete_account(acc_id, owner_id):
     c.execute("DELETE FROM accounts WHERE id=? AND owner_id=?", (acc_id, owner_id))
@@ -155,13 +186,12 @@ def get_campaign_stats():
 async def get_all_groups(client):
     groups = []
     try:
-        async for dialog in client.iter_dialogs():
+        # limit=None عشان يجيب كل الجروبات
+        async for dialog in client.iter_dialogs(limit=None, ignore_pinned=True):
             entity = dialog.entity
             if isinstance(entity, Chat):
                 groups.append(entity)
-            elif isinstance(entity, Channel):
-                if entity.broadcast or not entity.megagroup:
-                    continue
+            elif isinstance(entity, Channel) and entity.megagroup:
                 groups.append(entity)
     except Exception as e:
         print(f"Error getting groups: {e}")
@@ -175,21 +205,24 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
     content = format_post(raw_content, style, emoji)
     total_sent = 0
     total_failed = 0
-    await bot.send_message(user_id, f"🚀 **بدأت الحملة - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
+    await bot.send_message(user_id, f"🚀 **بدأت النشر - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
+
     for acc in accounts:
         if broadcast_tasks.get(user_id)!= asyncio.current_task():
             break
-        acc_id, _, session_string, phone, username, _, _, _ = acc
+        acc_id, _, session_string, phone, username, _, _, _, _ = acc
         client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
+        account_stopped = False
+
         try:
             await client.start()
             groups = await get_all_groups(client)
             await bot.send_message(user_id, f"📱 {phone or username}\n📊 لقيت {len(groups)} جروب")
+
             for group in groups:
                 if broadcast_tasks.get(user_id)!= asyncio.current_task():
                     break
-                if hasattr(group, 'broadcast') and group.broadcast:
-                    continue
+
                 try:
                     if media_id:
                         await client.send_file(group, media_id, caption=content, parse_mode='md')
@@ -199,24 +232,36 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
                     update_campaign_stats(campaign_id, 1, 0)
                     sleep_time = random.randint(delay_min, delay_max)
                     await asyncio.sleep(sleep_time)
+
                 except FloodWaitError as e:
-                    await bot.send_message(user_id, f"⏳ {phone}: انتظار {e.seconds}ث...")
-                    await asyncio.sleep(e.seconds)
+                    # جديد: لو حصل فلود نوقف الحساب ده فوراً
+                    await bot.send_message(user_id, f"🛑 **{phone} خد فلود {e.seconds}ث**\n⏸️ بوقف الحساب ده وبكمل باللي بعده")
+                    set_account_flood(acc_id, e.seconds)
+                    account_stopped = True
+                    break # اطلع من اللوب بتاع الجروبات وروح للحساب اللي بعده
+
                 except (ChatWriteForbiddenError, UserBannedInChannelError, SlowModeWaitError):
                     total_failed += 1
                     update_campaign_stats(campaign_id, 0, 1)
+
                 except Exception:
                     total_failed += 1
                     update_campaign_stats(campaign_id, 0, 1)
                     await asyncio.sleep(5)
-            c.execute("UPDATE accounts SET last_used=?, groups_count=? WHERE id=?", (datetime.now().isoformat(), len(groups), acc_id))
-            conn.commit()
+
+            if not account_stopped:
+                c.execute("UPDATE accounts SET last_used=?, groups_count=? WHERE id=?", (datetime.now().isoformat(), len(groups), acc_id))
+                conn.commit()
+
         except Exception as e:
             await bot.send_message(user_id, f"❌ خطأ في {phone}: {str(e)}")
         finally:
             await client.disconnect()
-        await asyncio.sleep(random.randint(30, 60))
-    await bot.send_message(user_id, f"✅ **انتهت الحملة - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
+
+        if not account_stopped:
+            await asyncio.sleep(random.randint(30, 60))
+
+    await bot.send_message(user_id, f"✅ **انتهت النشر - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
     stop_campaign(campaign_id)
     if user_id in broadcast_tasks:
         del broadcast_tasks[user_id]
@@ -225,16 +270,25 @@ def main_keyboard(user_id):
     buttons = []
     if is_vip(user_id):
         buttons.append([Button.inline('📝 إنشاء منشور', 'create_post')])
-        buttons.append([Button.inline('🚀 بدء الـ نشر', 'start_broadcast')])
+        buttons.append([Button.inline('🚀 بدء النشر', 'start_broadcast')])
         buttons.append([Button.inline('🛑 إيقاف النشر', 'stop_broadcast')])
         buttons.append([Button.inline('📱 إضافة حساب', 'add_account')])
         buttons.append([Button.inline('📋 حساباتي', 'my_accounts')])
     else:
+        buttons.append([Button.inline('⭐ اشتراك بالنجوم', 'stars_menu')])
         buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')])
         buttons.append([Button.inline('❌ حسابك غير مفعل', 'contact_admin')])
     if is_admin(user_id):
-        buttons.append([Button.inline('👑 لوحة الأدمن', 'admin_panel')])
+        buttons.append([Button.inline('👑 لوحة المبرمج', 'admin_panel')])
     return buttons
+
+def stars_menu_keyboard():
+    return [
+        [Button.inline(f'7 أيام - 50⭐', 'buy_7_days')],
+        [Button.inline(f'15 يوم - 100⭐', 'buy_15_days')],
+        [Button.inline(f'شهر كامل - 150⭐', 'buy_30_days')],
+        [Button.inline('🔙 رجوع', 'back_main')]
+    ]
 
 def admin_keyboard():
     return [[Button.inline('➕ تفعيل VIP', 'admin_add_vip'), Button.inline('❌ إلغاء VIP', 'admin_remove_vip')], [Button.inline('👥 قائمة الـVIP', 'admin_list_vips'), Button.inline('📊 إحصائيات', 'admin_stats')], [Button.inline('🔙 رجوع', 'back_main')]]
@@ -263,7 +317,7 @@ def setup_handlers():
             await bot.send_message(int(ADMIN_ID), f"🆕 **يوزر جديد دخل {SOURCE_NAME}**\n\nID: `{user_id}`\nUsername: @{username}\n\n🎁 تم تفعيل تجربة مجانية ساعة")
 
         if not is_vip(user_id):
-            await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ انتهت تجربتك المجانية\n\n💎 للتفعيل والاشتراك المدفوع دوس الزرار تحت", buttons=main_keyboard(user_id))
+            await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ انتهت تجربتك المجانية\n\n⭐ اشترك بالنجوم أو راسل المطور", buttons=main_keyboard(user_id))
             return
 
         c.execute("SELECT vip_expires, is_trial FROM users WHERE user_id=?", (user_id,))
@@ -273,12 +327,12 @@ def setup_handlers():
         accounts = get_user_accounts(user_id)
 
         trial_text = ""
-        if is_trial == 1:
+        if is_trial == 1 and exp:
             remaining = exp - datetime.now()
             minutes = int(remaining.total_seconds() / 60)
             trial_text = f"\n\n🎁 **تجربة مجانية**: فاضل {minutes} دقيقة"
 
-        await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d %H:%M')}{trial_text}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
+        await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d %H:%M') if exp else 'غير محدد'}{trial_text}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
 
     @bot.on(events.NewMessage(pattern='/activate'))
     async def activate_cmd(event):
@@ -367,13 +421,34 @@ def setup_handlers():
             return
 
         if data == 'contact_admin':
-            await event.answer("كلم الأدمن للتفعيل", alert=True)
+            await event.answer("كلم المبرمج للتفعيل", alert=True)
             return
         if data == 'contact_dev':
             await event.edit(f"💎 **للاشتراك المدفوع في {SOURCE_NAME}**\n\nراسل المطور عشان تعرف الأسعار والتفاصيل:", buttons=[
-                [Button.url('👨‍💻 راسل المطور', f'https://t.me/{DEVELOPER_USERNAME}')],
+                [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')],
                 [Button.inline('🔙 رجوع', 'back_main')]
             ])
+            return
+        if data == 'stars_menu':
+            await event.edit(f"⭐ **اشترك في {SOURCE_NAME} بالنجوم**\n\nاختر الباقة اللي تناسبك:", buttons=stars_menu_keyboard())
+            return
+        if data.startswith('buy_'):
+            package = data.split('_')[1] + '_' + data.split('_')[2]
+            if package not in STAR_PACKAGES:
+                return
+            pkg = STAR_PACKAGES[package]
+            await event.edit(f"⭐ **تأكيد الشراء**\n\nالباقة: {pkg['label']}\nالسعر: {pkg['stars']} نجمة\n\nدوس الدفع تحت عشان تكمل", buttons=[
+                [Button.buy(f'💫 ادفع {pkg["stars"]} نجمة')],
+                [Button.inline('🔙 رجوع', 'stars_menu')]
+            ])
+            await bot.send_invoice(
+                user_id,
+                title=f"{SOURCE_NAME} - {pkg['label']}",
+                description=f"اشتراك VIP لمدة {pkg['label']} في بوت {SOURCE_NAME}",
+                currency='XTR',
+                prices=[LabeledPrice(label=pkg['label'], amount=pkg['stars'])],
+                payload=f"vip_{package}_{user_id}"
+            )
             return
         if data == 'create_post':
             if not is_vip(user_id):
@@ -422,19 +497,19 @@ def setup_handlers():
                 del broadcast_tasks[user_id]
                 await event.edit("🛑 تم إيقاف النشر", buttons=main_keyboard(user_id))
             else:
-                await event.answer("مفيش نشر شغال", alert=True)
+                await event.answer("مفيش حملة شغالة", alert=True)
         elif data == 'add_account':
             waiting_for[user_id] = 'account_phone'
             await event.edit("📱 **إضافة حساب**\n\nابعت رقم الهاتف:\nمثال: +201234567890")
         elif data == 'my_accounts':
             accounts = get_user_accounts(user_id)
             if not accounts:
-                await event.edit("❌ مفيش حسابات", buttons=main_keyboard(user_id))
+                await event.edit("❌ مفيش حسابات متاحة", buttons=main_keyboard(user_id))
                 return
             text = f"📱 **حساباتك في {SOURCE_NAME}** ({len(accounts)})\n\n"
             buttons = []
             for acc in accounts:
-                acc_id, _, _, phone, username, _, last_used, groups_count = acc
+                acc_id, _, _, phone, username, _, last_used, groups_count, _ = acc
                 text += f"📞 {phone or username}\n📊 الجروبات: {groups_count}\n\n"
                 buttons.append([Button.inline(f"🗑️ حذف {phone}", f'del_acc_{acc_id}')])
             buttons.append([Button.inline('🔙 رجوع', 'back_main')])
@@ -457,7 +532,7 @@ def setup_handlers():
             await event.edit(f"جاري إرسال `{name}` لكل الجروبات...")
             sent = 0
             for acc in accounts:
-                acc_id, _, session_string, phone, username, _, _, _ = acc
+                acc_id, _, session_string, phone, username, _, _, _, _ = acc
                 client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
                 try:
                     await client.start()
@@ -479,7 +554,7 @@ def setup_handlers():
             c.execute("SELECT COUNT(*) FROM accounts")
             acc_count = c.fetchone()[0]
             running, sent, failed = get_campaign_stats()
-            await event.edit(f"👑 **لوحة الأدمن - {SOURCE_NAME}**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
+            await event.edit(f"👑 **لوحة المطور - {SOURCE_NAME}**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
         elif data == 'admin_add_vip':
             if not is_admin(user_id):
                 return
@@ -500,7 +575,7 @@ def setup_handlers():
             text = f"👑 **قائمة الـVIP في {SOURCE_NAME}** ({len(vips)})\n\n"
             for vip in vips[:20]:
                 uid, uname, _, exp, _, _ = vip
-                exp_date = safe_parse_date(exp).strftime('%Y-%m-%d')
+                exp_date = safe_parse_date(exp).strftime('%Y-%m-%d') if safe_parse_date(exp) else 'غير محدد'
                 text += f"`{uid}` @{uname}\n📅 ينتهي: {exp_date}\n\n"
             await event.edit(text, buttons=admin_keyboard())
         elif data == 'admin_stats':
@@ -514,6 +589,26 @@ def setup_handlers():
             await event.edit(f"📊 **إحصائيات {SOURCE_NAME}**\n\n👥 المستخدمين: {total_users}\n📝 المنشورات: {total_posts}\n🚀 حملات شغالة: {running}\n📤 المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
         elif data == 'back_main':
             await event.edit("القائمة الرئيسية:", buttons=main_keyboard(user_id))
+
+    @bot.on(events.PreCheckoutQuery)
+    async def checkout(event):
+        await event.answer(ok=True)
+
+    @bot.on(events.NewMessage(pattern=None, func=lambda e: e.successful_payment))
+    async def payment_success(event):
+        user_id = event.sender_id
+        payment = event.successful_payment
+        payload = payment.invoice_payload
+
+        try:
+            parts = payload.split('_')
+            package_key = f"{parts[1]}_{parts[2]}"
+            if package_key in STAR_PACKAGES:
+                pkg = STAR_PACKAGES[package_key]
+                new_exp = extend_vip(user_id, pkg['days'])
+                await event.reply(f"💫 **تم الدفع بنجاح!**\n\n✅ تم تفعيل اشتراكك {pkg['label']}\n⭐ دفعت: {pkg['stars']} نجمة\n📅 صالح لحد: {new_exp.strftime('%Y-%m-%d %H:%M')}\n\nشكراً لاستخدام {SOURCE_NAME} 🔥", buttons=main_keyboard(user_id))
+        except Exception as e:
+            await event.reply(f"✅ تم استلام الدفع بس حصل خطأ في التفعيل\nكلم الأدمن")
 
     @bot.on(events.NewMessage)
     async def handle_message(event):
@@ -536,120 +631,4 @@ def setup_handlers():
         elif waiting_for.get(user_id) == 'emoji_custom_input':
             custom_emoji = text.strip()
             data_dict = temp_data.get(user_id, {})
-            post_id = save_post(user_id, data_dict['content'], data_dict.get('media_id'), data_dict['style'], custom_emoji)
-            waiting_for[user_id] = None
-            temp_data.pop(user_id, None)
-            await event.reply(f"✅ **تم حفظ المنشور**\nID: {post_id}\nالإيموجي: {custom_emoji}\n\nدوس 'بدء حملة نشر' عشان تبدأ", buttons=main_keyboard(user_id))
-        elif waiting_for.get(user_id) == 'broadcast_delay':
-            try:
-                parts = text.split()
-                delay_min = int(parts[0])
-                delay_max = int(parts[1])
-                if delay_min < 10:
-                    await event.reply("❌ أقل تأخير 10 ثواني")
-                    return
-                data = temp_data[user_id]
-                campaign_id = create_campaign(user_id, data['post_id'], delay_min, delay_max)
-                task = asyncio.create_task(broadcast_task(user_id, campaign_id, data['post_id'], data['accounts'], delay_min, delay_max))
-                broadcast_tasks[user_id] = task
-                waiting_for[user_id] = None
-                temp_data.pop(user_id, None)
-            except:
-                await event.reply("❌ الصيغة غلط\nمثال: 30 120")
-        elif waiting_for.get(user_id) == 'account_phone':
-            if not text.startswith('+'):
-                await event.reply("❌ لازم يبدأ بـ +\nمثال: +201234567890")
-                return
-            waiting_for[user_id] = 'account_code'
-            temp_data[user_id] = {'phone': text}
-            client = TelegramClient(StringSession(), int(API_ID), API_HASH)
-            try:
-                await client.connect()
-                sent = await client.send_code_request(text)
-                temp_data[user_id]['client'] = client
-                temp_data[user_id]['phone_code_hash'] = sent.phone_code_hash
-                await event.reply(f"📲 اتبعت كود لـ {text}\n\nابعته هنا:")
-            except Exception as e:
-                await event.reply(f"❌ خطأ: {str(e)}")
-                waiting_for[user_id] = None
-                await client.disconnect()
-        elif waiting_for.get(user_id) == 'account_code':
-            data = temp_data.get(user_id, {})
-            client = data.get('client')
-            if not client:
-                waiting_for[user_id] = None
-                return
-            try:
-                await client.sign_in(phone=data['phone'], code=text, phone_code_hash=data['phone_code_hash'])
-                session_string = client.session.save()
-                me = await client.get_me()
-                add_account(user_id, session_string, data['phone'], me.username or f"user{me.id}")
-                await event.reply(f"✅ تم إضافة الحساب\n@{me.username}", buttons=main_keyboard(user_id))
-                await client.disconnect()
-                waiting_for[user_id] = None
-                temp_data.pop(user_id, None)
-            except SessionPasswordNeededError:
-                waiting_for[user_id] = 'account_2fa'
-                await event.reply("🔒 الحساب عليه 2FA\nابعت كلمة السر:")
-            except Exception as e:
-                await event.reply(f"❌ الكود غلط: {str(e)}")
-                waiting_for[user_id] = None
-                await client.disconnect()
-        elif waiting_for.get(user_id) == 'account_2fa':
-            data = temp_data.get(user_id, {})
-            client = data.get('client')
-            if not client:
-                return
-            try:
-                await client.sign_in(password=text)
-                session_string = client.session.save()
-                me = await client.get_me()
-                add_account(user_id, session_string, data['phone'], me.username or f"user{me.id}")
-                await event.reply(f"✅ تم إضافة الحساب\n@{me.username}", buttons=main_keyboard(user_id))
-                await client.disconnect()
-                waiting_for[user_id] = None
-                temp_data.pop(user_id, None)
-            except Exception as e:
-                await event.reply(f"❌ كلمة السر غلط: {str(e)}")
-                waiting_for[user_id] = None
-                await client.disconnect()
-        elif waiting_for.get(user_id) == 'admin_add_vip_input':
-            if not is_admin(user_id):
-                return
-            try:
-                parts = text.split()
-                target_id = int(parts[0])
-                days = int(parts[1])
-                expires = add_vip(target_id, days)
-                waiting_for[user_id] = None
-                await event.reply(f"✅ تم التفعيل\nID: `{target_id}`\nينتهي: {expires.strftime('%Y-%m-%d')}", buttons=admin_keyboard())
-                try:
-                    await bot.send_message(target_id, f"💎 **تم تفعيل حسابك في {SOURCE_NAME}** ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
-                except:
-                    pass
-            except:
-                await event.reply("❌ الصيغة غلط\nuser_id days")
-        elif waiting_for.get(user_id) == 'admin_remove_vip_input':
-            if not is_admin(user_id):
-                return
-            try:
-                target_id = int(text)
-                remove_vip(target_id)
-                waiting_for[user_id] = None
-                await event.reply(f"✅ تم إلغاء VIP للـ `{target_id}`", buttons=admin_keyboard())
-            except:
-                await event.reply("❌ ID غلط")
-
-def main():
-    global bot
-    if not all([API_ID, API_HASH, BOT_TOKEN, ADMIN_ID]):
-        print("ERROR: Missing env vars")
-        return
-    init_db()
-    bot = TelegramClient('broadcaster_bot', int(API_ID), API_HASH).start(bot_token=BOT_TOKEN)
-    setup_handlers()
-    print(f"{SOURCE_NAME} شغال...")
-    bot.run_until_disconnected()
-
-if __name__ == "__main__":
-    main()
+            post_id = save_post(user_id, data

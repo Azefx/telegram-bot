@@ -6,14 +6,15 @@ from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.tl.types import InputPeerEmpty, Channel, Chat
-from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError
+from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
-SOURCE_NAME = "Source Azef" # اسم السورس بتاعنا
+SOURCE_NAME = "Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك عشان زرار راسل المطور
+DEVELOPER_USERNAME = "YourUsername" # غير ده ليوزرك
+MANDATORY_CHANNEL = "@YourChannel" # جديد: غير ده ليوزر القناة الإجبارية
 
 bot = None
 conn = None
@@ -27,7 +28,7 @@ def init_db():
     global conn, c
     conn = sqlite3.connect('broadcaster.db', check_same_thread=False)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, is_vip INTEGER DEFAULT 0, vip_expires TEXT, joined_at TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, is_vip INTEGER DEFAULT 0, vip_expires TEXT, joined_at TEXT, is_trial INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, session_string TEXT, phone TEXT, username TEXT, is_active INTEGER DEFAULT 1, last_used TEXT, groups_count INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, content TEXT, media_id TEXT, style TEXT DEFAULT 'normal', emoji TEXT, created_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, post_id INTEGER, delay_min INTEGER, delay_max INTEGER, status TEXT DEFAULT 'running', sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, started_at TEXT)''')
@@ -42,28 +43,54 @@ def safe_parse_date(date_string):
 def is_admin(user_id):
     return user_id == int(ADMIN_ID)
 
+async def check_subscription(user_id):
+    """جديد: يتأكد إن العضو مشترك في القناة الإجبارية"""
+    if is_admin(user_id):
+        return True
+    try:
+        await bot.get_permissions(MANDATORY_CHANNEL, user_id)
+        return True
+    except UserNotParticipantError:
+        return False
+    except:
+        return True # لو القناة غلط أو البوت مش أدمن فيها نعديه عشان ميقفش
+
 def is_vip(user_id):
     if is_admin(user_id):
         return True
-    c.execute("SELECT vip_expires FROM users WHERE user_id=?", (user_id,))
+    c.execute("SELECT vip_expires, is_trial FROM users WHERE user_id=?", (user_id,))
     row = c.fetchone()
     if not row or not row[0]:
         return False
     expires = safe_parse_date(row[0])
+    is_trial = row[1]
+
+    if expires <= datetime.now() and is_trial == 1:
+        c.execute("UPDATE users SET is_vip=0, vip_expires=NULL, is_trial=0 WHERE user_id=?", (user_id,))
+        conn.commit()
+        return False
+
     return expires > datetime.now()
 
 def create_user(user_id, username):
+    c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+    is_new = not c.fetchone()
     c.execute("INSERT OR IGNORE INTO users (user_id, username, joined_at) VALUES (?,?,?)", (user_id, username, datetime.now().isoformat()))
+
+    if is_new and not is_admin(user_id):
+        expires = datetime.now() + timedelta(hours=1)
+        c.execute("UPDATE users SET is_vip=1, vip_expires=?, is_trial=1 WHERE user_id=?", (expires.isoformat(), user_id))
     conn.commit()
+    return is_new
 
 def add_vip(user_id, days):
     expires = datetime.now() + timedelta(days=days)
-    c.execute("UPDATE users SET is_vip=1, vip_expires=? WHERE user_id=?", (expires.isoformat(), user_id))
+    c.execute("UPDATE users SET is_vip=1, vip_expires=?, is_trial=0 WHERE user_id=?", (expires.isoformat(), user_id))
     conn.commit()
     return expires
 
 def remove_vip(user_id):
-    c.execute("UPDATE users SET is_vip=0, vip_expires=NULL WHERE user_id=?", (user_id,))
+    c.execute("UPDATE users SET is_vip=0, vip_expires=NULL, is_trial=0 WHERE user_id=?", (user_id,))
     conn.commit()
 
 def get_all_vips():
@@ -204,7 +231,7 @@ def main_keyboard(user_id):
         buttons.append([Button.inline('📱 إضافة حساب', 'add_account')])
         buttons.append([Button.inline('📋 حساباتي', 'my_accounts')])
     else:
-        buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')]) # جديد
+        buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')])
         buttons.append([Button.inline('❌ حسابك غير مفعل', 'contact_admin')])
     if is_admin(user_id):
         buttons.append([Button.inline('👑 لوحة الأدمن', 'admin_panel')])
@@ -224,24 +251,36 @@ def setup_handlers():
     async def start(event):
         user_id = event.sender_id
         username = event.sender.username or f"user{user_id}"
-        is_new = False
-        c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
-        if not c.fetchone():
-            is_new = True
-        create_user(user_id, username)
+        is_new = create_user(user_id, username)
 
-        # جديد: ترحيب لكل شخص + إشعار للأدمن
-        if is_new:
-            await bot.send_message(int(ADMIN_ID), f"🆕 **يوزر جديد دخل بوت {SOURCE_NAME}**\n\nID: `{user_id}`\nUsername: @{username}")
-
-        if not is_vip(user_id):
-            await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ حسابك غير مفعل حالياً\n\n💎 للتفعيل والاشتراك المدفوع دوس الزرار تحت", buttons=main_keyboard(user_id))
+        # جديد: التحقق من الاشتراك الإجباري أول حاجة
+        if not await check_subscription(user_id):
+            await event.reply(f"🚫 **أهلاً بيك في {SOURCE_NAME}**\n\nعشان تستخدم البوت لازم تشترك في القناة الرسمية الأول:", buttons=[
+                [Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')],
+                [Button.inline('✅ تحققت من الاشتراك', 'check_sub')]
+            ])
             return
 
-        c.execute("SELECT vip_expires FROM users WHERE user_id=?", (user_id,))
-        exp = safe_parse_date(c.fetchone()[0])
+        if is_new:
+            await bot.send_message(int(ADMIN_ID), f"🆕 **يوزر جديد دخل {SOURCE_NAME}**\n\nID: `{user_id}`\nUsername: @{username}\n\n🎁 تم تفعيل تجربة مجانية ساعة")
+
+        if not is_vip(user_id):
+            await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ انتهت تجربتك المجانية\n\n💎 للتفعيل والاشتراك المدفوع دوس الزرار تحت", buttons=main_keyboard(user_id))
+            return
+
+        c.execute("SELECT vip_expires, is_trial FROM users WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+        exp = safe_parse_date(row[0])
+        is_trial = row[1]
         accounts = get_user_accounts(user_id)
-        await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d')}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
+
+        trial_text = ""
+        if is_trial == 1:
+            remaining = exp - datetime.now()
+            minutes = int(remaining.total_seconds() / 60)
+            trial_text = f"\n\n🎁 **تجربة مجانية**: فاضل {minutes} دقيقة"
+
+        await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d %H:%M')}{trial_text}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
 
     @bot.on(events.NewMessage(pattern='/activate'))
     async def activate_cmd(event):
@@ -263,6 +302,9 @@ def setup_handlers():
     @bot.on(events.NewMessage(pattern='/save'))
     async def save_media(event):
         user_id = event.sender_id
+        if not await check_subscription(user_id):
+            await event.reply("🚫 لازم تشترك في القناة الأول", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')]])
+            return
         if not is_vip(user_id): return
         if not event.photo:
             await event.reply("❌ لازم تبعت الأمر مع صورة\nمثال: ابعت صورة والكابشن `/save عروض`")
@@ -278,6 +320,9 @@ def setup_handlers():
     @bot.on(events.NewMessage(pattern='/send'))
     async def send_media(event):
         user_id = event.sender_id
+        if not await check_subscription(user_id):
+            await event.reply("🚫 لازم تشترك في القناة الأول", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')]])
+            return
         if not is_vip(user_id): return
         try:
             name = event.text.split(' ', 1)[1].strip()
@@ -294,6 +339,9 @@ def setup_handlers():
     @bot.on(events.NewMessage(pattern='/list'))
     async def list_media(event):
         user_id = event.sender_id
+        if not await check_subscription(user_id):
+            await event.reply("🚫 لازم تشترك في القناة الأول", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')]])
+            return
         if not is_vip(user_id): return
         if user_id not in TEMP_MEDIA or not TEMP_MEDIA[user_id]:
             await event.reply("مفيش صور محفوظة عندك")
@@ -308,10 +356,24 @@ def setup_handlers():
         user_id = event.sender_id
         data = event.data.decode('utf-8')
         create_user(user_id, event.sender.username or f"user{user_id}")
+
+        # جديد: زرار التحقق من الاشتراك
+        if data == 'check_sub':
+            if await check_subscription(user_id):
+                await event.edit("✅ **تمام! تم التحقق من اشتراكك**\n\nدوس /start عشان تبدأ")
+            else:
+                await event.answer("❌ لسه مش مشترك في القناة", alert=True)
+            return
+
+        # جديد: نتأكد من الاشتراك قبل أي أمر
+        if not await check_subscription(user_id):
+            await event.answer("🚫 لازم تشترك في القناة الأول", alert=True)
+            return
+
         if data == 'contact_admin':
             await event.answer("كلم الأدمن للتفعيل", alert=True)
             return
-        if data == 'contact_dev': # جديد: زرار راسل المطور
+        if data == 'contact_dev':
             await event.edit(f"💎 **للاشتراك المدفوع في {SOURCE_NAME}**\n\nراسل المطور عشان تعرف الأسعار والتفاصيل:", buttons=[
                 [Button.url('👨‍💻 راسل المطور', f'https://t.me/{DEVELOPER_USERNAME}')],
                 [Button.inline('🔙 رجوع', 'back_main')]
@@ -441,7 +503,7 @@ def setup_handlers():
                 return
             text = f"👑 **قائمة الـVIP في {SOURCE_NAME}** ({len(vips)})\n\n"
             for vip in vips[:20]:
-                uid, uname, _, exp, _ = vip
+                uid, uname, _, exp, _, _ = vip
                 exp_date = safe_parse_date(exp).strftime('%Y-%m-%d')
                 text += f"`{uid}` @{uname}\n📅 ينتهي: {exp_date}\n\n"
             await event.edit(text, buttons=admin_keyboard())
@@ -461,6 +523,12 @@ def setup_handlers():
     async def handle_message(event):
         user_id = event.sender_id
         text = event.text
+
+        # جديد: التحقق من الاشتراك في كل الرسايل
+        if not await check_subscription(user_id):
+            await event.reply("🚫 **لازم تشترك في القناة الأول**", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')], [Button.inline('✅ تحققت', 'check_sub')]])
+            return
+
         if text == '/start' or text.startswith('/activate') or text.startswith('/save') or text.startswith('/send') or text.startswith('/list'):
             return
         if waiting_for.get(user_id) == 'post_content':
@@ -574,19 +642,3 @@ def setup_handlers():
                 remove_vip(target_id)
                 waiting_for[user_id] = None
                 await event.reply(f"✅ تم إلغاء VIP للـ `{target_id}`", buttons=admin_keyboard())
-            except:
-                await event.reply("❌ ID غلط")
-
-def main():
-    global bot
-    if not all([API_ID, API_HASH, BOT_TOKEN, ADMIN_ID]):
-        print("ERROR: Missing env vars")
-        return
-    init_db()
-    bot = TelegramClient('broadcaster_bot', int(API_ID), API_HASH).start(bot_token=BOT_TOKEN)
-    setup_handlers()
-    print(f"{SOURCE_NAME} شغال...")
-    bot.run_until_disconnected()
-
-if __name__ == "__main__":
-    main()

@@ -8,13 +8,13 @@ from telethon.sessions import StringSession
 from telethon.tl.types import InputPeerEmpty, Channel, Chat, LabeledPrice
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
-SOURCE_NAME = "Source Programer Azef"
+SOURCE_NAME = "Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك انت
-MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية - سيبه فاضي لو مش عايز
+DEVELOPER_USERNAME = "YourUsername" # غير ده ليوزرك انت
+MANDATORY_CHANNEL = "@YourChannel" # غير ده ليوزر القناة الإجبارية - سيبه فاضي لو مش عايز
 
 bot = None
 conn = None
@@ -42,6 +42,8 @@ def init_db():
     conn.commit()
 
 def safe_parse_date(date_string):
+    if not date_string:
+        return None
     try:
         return datetime.fromisoformat(date_string)
     except:
@@ -125,7 +127,6 @@ def add_account(owner_id, session_string, phone, username):
     conn.commit()
 
 def get_user_accounts(user_id):
-    # هات الحسابات اللي مش في فلود بس
     now = datetime.now().isoformat()
     c.execute("SELECT * FROM accounts WHERE owner_id=? AND is_active=1 AND (flood_until IS NULL OR flood_until <?) ORDER BY last_used ASC", (user_id, now))
     return c.fetchall()
@@ -186,7 +187,6 @@ def get_campaign_stats():
 async def get_all_groups(client):
     groups = []
     try:
-        # limit=None عشان يجيب كل الجروبات
         async for dialog in client.iter_dialogs(limit=None, ignore_pinned=True):
             entity = dialog.entity
             if isinstance(entity, Chat):
@@ -205,7 +205,7 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
     content = format_post(raw_content, style, emoji)
     total_sent = 0
     total_failed = 0
-    await bot.send_message(user_id, f"🚀 **بدأت النشر - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
+    await bot.send_message(user_id, f"🚀 **بدأت الحملة - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
 
     for acc in accounts:
         if broadcast_tasks.get(user_id)!= asyncio.current_task():
@@ -234,11 +234,10 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
                     await asyncio.sleep(sleep_time)
 
                 except FloodWaitError as e:
-                    # جديد: لو حصل فلود نوقف الحساب ده فوراً
                     await bot.send_message(user_id, f"🛑 **{phone} خد فلود {e.seconds}ث**\n⏸️ بوقف الحساب ده وبكمل باللي بعده")
                     set_account_flood(acc_id, e.seconds)
                     account_stopped = True
-                    break # اطلع من اللوب بتاع الجروبات وروح للحساب اللي بعده
+                    break
 
                 except (ChatWriteForbiddenError, UserBannedInChannelError, SlowModeWaitError):
                     total_failed += 1
@@ -261,7 +260,7 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
         if not account_stopped:
             await asyncio.sleep(random.randint(30, 60))
 
-    await bot.send_message(user_id, f"✅ **انتهت النشر - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
+    await bot.send_message(user_id, f"✅ **انتهت الحملة - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
     stop_campaign(campaign_id)
     if user_id in broadcast_tasks:
         del broadcast_tasks[user_id]
@@ -270,8 +269,8 @@ def main_keyboard(user_id):
     buttons = []
     if is_vip(user_id):
         buttons.append([Button.inline('📝 إنشاء منشور', 'create_post')])
-        buttons.append([Button.inline('🚀 بدء النشر', 'start_broadcast')])
-        buttons.append([Button.inline('🛑 إيقاف النشر', 'stop_broadcast')])
+        buttons.append([Button.inline('🚀 بدء حملة نشر', 'start_broadcast')])
+        buttons.append([Button.inline('🛑 إيقاف الحملة', 'stop_broadcast')])
         buttons.append([Button.inline('📱 إضافة حساب', 'add_account')])
         buttons.append([Button.inline('📋 حساباتي', 'my_accounts')])
     else:
@@ -279,7 +278,7 @@ def main_keyboard(user_id):
         buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')])
         buttons.append([Button.inline('❌ حسابك غير مفعل', 'contact_admin')])
     if is_admin(user_id):
-        buttons.append([Button.inline('👑 لوحة المبرمج', 'admin_panel')])
+        buttons.append([Button.inline('👑 لوحة الأدمن', 'admin_panel')])
     return buttons
 
 def stars_menu_keyboard():
@@ -421,11 +420,11 @@ def setup_handlers():
             return
 
         if data == 'contact_admin':
-            await event.answer("كلم المبرمج للتفعيل", alert=True)
+            await event.answer("كلم الأدمن للتفعيل", alert=True)
             return
         if data == 'contact_dev':
             await event.edit(f"💎 **للاشتراك المدفوع في {SOURCE_NAME}**\n\nراسل المطور عشان تعرف الأسعار والتفاصيل:", buttons=[
-                [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')],
+                [Button.url('👨‍💻 راسل المطور', f'https://t.me/{DEVELOPER_USERNAME}')],
                 [Button.inline('🔙 رجوع', 'back_main')]
             ])
             return
@@ -495,7 +494,7 @@ def setup_handlers():
             if user_id in broadcast_tasks:
                 broadcast_tasks[user_id].cancel()
                 del broadcast_tasks[user_id]
-                await event.edit("🛑 تم إيقاف النشر", buttons=main_keyboard(user_id))
+                await event.edit("🛑 تم إيقاف الحملة", buttons=main_keyboard(user_id))
             else:
                 await event.answer("مفيش حملة شغالة", alert=True)
         elif data == 'add_account':
@@ -554,7 +553,7 @@ def setup_handlers():
             c.execute("SELECT COUNT(*) FROM accounts")
             acc_count = c.fetchone()[0]
             running, sent, failed = get_campaign_stats()
-            await event.edit(f"👑 **لوحة المطور - {SOURCE_NAME}**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
+            await event.edit(f"👑 **لوحة الأدمن - {SOURCE_NAME}**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
         elif data == 'admin_add_vip':
             if not is_admin(user_id):
                 return
@@ -631,4 +630,18 @@ def setup_handlers():
         elif waiting_for.get(user_id) == 'emoji_custom_input':
             custom_emoji = text.strip()
             data_dict = temp_data.get(user_id, {})
-            post_id = save_post(user_id, data
+            post_id = save_post(user_id, data_dict['content'], data_dict.get('media_id'), data_dict['style'], custom_emoji)
+            waiting_for[user_id] = None
+            temp_data.pop(user_id, None)
+            await event.reply(f"✅ **تم حفظ المنشور**\nID: {post_id}\nالإيموجي: {custom_emoji}\n\nدوس 'بدء حملة نشر' عشان تبدأ", buttons=main_keyboard(user_id))
+        elif waiting_for.get(user_id) == 'broadcast_delay':
+            try:
+                parts = text.split()
+                delay_min = int(parts[0])
+                delay_max = int(parts[1])
+                if delay_min < 10:
+                    await event.reply("❌ أقل تأخير 10 ثواني")
+                    return
+                data = temp_data[user_id]
+                campaign_id = create_campaign(user_id, data['post_id'], delay_min, delay_max)
+                task = asyncio.create_task(broadcast_task(user_id, campaign_id, data['post_id'],

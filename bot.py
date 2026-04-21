@@ -13,8 +13,8 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك
-MANDATORY_CHANNEL = "Spraize" # جديد: غير ده ليوزر القناة الإجبارية
+DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك انت
+MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية
 
 bot = None
 conn = None
@@ -44,7 +44,6 @@ def is_admin(user_id):
     return user_id == int(ADMIN_ID)
 
 async def check_subscription(user_id):
-    """جديد: يتأكد إن العضو مشترك في القناة الإجبارية"""
     if is_admin(user_id):
         return True
     try:
@@ -53,7 +52,7 @@ async def check_subscription(user_id):
     except UserNotParticipantError:
         return False
     except:
-        return True # لو القناة غلط أو البوت مش أدمن فيها نعديه عشان ميقفش
+        return True
 
 def is_vip(user_id):
     if is_admin(user_id):
@@ -253,7 +252,6 @@ def setup_handlers():
         username = event.sender.username or f"user{user_id}"
         is_new = create_user(user_id, username)
 
-        # جديد: التحقق من الاشتراك الإجباري أول حاجة
         if not await check_subscription(user_id):
             await event.reply(f"🚫 **أهلاً بيك في {SOURCE_NAME}**\n\nعشان تستخدم البوت لازم تشترك في القناة الرسمية الأول:", buttons=[
                 [Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')],
@@ -357,7 +355,6 @@ def setup_handlers():
         data = event.data.decode('utf-8')
         create_user(user_id, event.sender.username or f"user{user_id}")
 
-        # جديد: زرار التحقق من الاشتراك
         if data == 'check_sub':
             if await check_subscription(user_id):
                 await event.edit("✅ **تمام! تم التحقق من اشتراكك**\n\nدوس /start عشان تبدأ")
@@ -365,7 +362,6 @@ def setup_handlers():
                 await event.answer("❌ لسه مش مشترك في القناة", alert=True)
             return
 
-        # جديد: نتأكد من الاشتراك قبل أي أمر
         if not await check_subscription(user_id):
             await event.answer("🚫 لازم تشترك في القناة الأول", alert=True)
             return
@@ -524,7 +520,6 @@ def setup_handlers():
         user_id = event.sender_id
         text = event.text
 
-        # جديد: التحقق من الاشتراك في كل الرسايل
         if not await check_subscription(user_id):
             await event.reply("🚫 **لازم تشترك في القناة الأول**", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')], [Button.inline('✅ تحققت', 'check_sub')]])
             return
@@ -642,3 +637,19 @@ def setup_handlers():
                 remove_vip(target_id)
                 waiting_for[user_id] = None
                 await event.reply(f"✅ تم إلغاء VIP للـ `{target_id}`", buttons=admin_keyboard())
+            except:
+                await event.reply("❌ ID غلط")
+
+def main():
+    global bot
+    if not all([API_ID, API_HASH, BOT_TOKEN, ADMIN_ID]):
+        print("ERROR: Missing env vars")
+        return
+    init_db()
+    bot = TelegramClient('broadcaster_bot', int(API_ID), API_HASH).start(bot_token=BOT_TOKEN)
+    setup_handlers()
+    print(f"{SOURCE_NAME} شغال...")
+    bot.run_until_disconnected()
+
+if __name__ == "__main__":
+    main()

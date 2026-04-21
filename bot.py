@@ -5,13 +5,15 @@ import random
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.tl.types import Chat, Channel
+from telethon.tl.types import InputPeerEmpty, Channel, Chat
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError
 
+SOURCE_NAME = "Azef" # اسم السورس بتاعنا
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
+DEVELOPER_USERNAME = "@devazf" # غير ده ليوزرك عشان زرار راسل المطور
 
 bot = None
 conn = None
@@ -19,16 +21,23 @@ c = None
 waiting_for = {}
 temp_data = {}
 broadcast_tasks = {}
+TEMP_MEDIA = {}
 
 def init_db():
     global conn, c
-    conn = sqlite3.connect('bot.db', check_same_thread=False)
+    conn = sqlite3.connect('broadcaster.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, is_vip INTEGER DEFAULT 0, vip_expires TEXT, joined_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, session_string TEXT, phone TEXT, username TEXT, is_active INTEGER DEFAULT 1, last_used TEXT, groups_count INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, content TEXT, media_id TEXT, style TEXT DEFAULT 'normal', emoji TEXT, created_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, post_id INTEGER, delay_min INTEGER, delay_max INTEGER, status TEXT DEFAULT 'running', sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, started_at TEXT)''')
     conn.commit()
+
+def safe_parse_date(date_string):
+    try:
+        return datetime.fromisoformat(date_string)
+    except:
+        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
 
 def is_admin(user_id):
     return user_id == int(ADMIN_ID)
@@ -40,7 +49,7 @@ def is_vip(user_id):
     row = c.fetchone()
     if not row or not row[0]:
         return False
-    expires = datetime.fromisoformat(row[0])
+    expires = safe_parse_date(row[0])
     return expires > datetime.now()
 
 def create_user(user_id, username):
@@ -140,7 +149,7 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
     content = format_post(raw_content, style, emoji)
     total_sent = 0
     total_failed = 0
-    await bot.send_message(user_id, f"🚀 **بدأت الحملة**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
+    await bot.send_message(user_id, f"🚀 **بدأت الحملة - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
     for acc in accounts:
         if broadcast_tasks.get(user_id)!= asyncio.current_task():
             break
@@ -181,7 +190,7 @@ async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, del
         finally:
             await client.disconnect()
         await asyncio.sleep(random.randint(30, 60))
-    await bot.send_message(user_id, f"✅ **انتهت الحملة**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
+    await bot.send_message(user_id, f"✅ **انتهت الحملة - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
     stop_campaign(campaign_id)
     if user_id in broadcast_tasks:
         del broadcast_tasks[user_id]
@@ -195,6 +204,7 @@ def main_keyboard(user_id):
         buttons.append([Button.inline('📱 إضافة حساب', 'add_account')])
         buttons.append([Button.inline('📋 حساباتي', 'my_accounts')])
     else:
+        buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')]) # جديد
         buttons.append([Button.inline('❌ حسابك غير مفعل', 'contact_admin')])
     if is_admin(user_id):
         buttons.append([Button.inline('👑 لوحة الأدمن', 'admin_panel')])
@@ -214,15 +224,24 @@ def setup_handlers():
     async def start(event):
         user_id = event.sender_id
         username = event.sender.username or f"user{user_id}"
+        is_new = False
+        c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+        if not c.fetchone():
+            is_new = True
         create_user(user_id, username)
+
+        # جديد: ترحيب لكل شخص + إشعار للأدمن
+        if is_new:
+            await bot.send_message(int(ADMIN_ID), f"🆕 **يوزر جديد دخل بوت {SOURCE_NAME}**\n\nID: `{user_id}`\nUsername: @{username}")
+
         if not is_vip(user_id):
-            await event.reply("❌ **حسابك غير مفعل**\n\nكلم الأدمن للتفعيل", buttons=main_keyboard(user_id))
-            await bot.send_message(int(ADMIN_ID), f"🆕 يوزر جديد\nID: `{user_id}`\n@{username}")
+            await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ حسابك غير مفعل حالياً\n\n💎 للتفعيل والاشتراك المدفوع دوس الزرار تحت", buttons=main_keyboard(user_id))
             return
+
         c.execute("SELECT vip_expires FROM users WHERE user_id=?", (user_id,))
-        exp = datetime.fromisoformat(c.fetchone()[0])
+        exp = safe_parse_date(c.fetchone()[0])
         accounts = get_user_accounts(user_id)
-        await event.reply(f"أهلاً بيك في بوت النشر المتطور 🔥\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d')}\n📱 الحسابات: {len(accounts)}", buttons=main_keyboard(user_id))
+        await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d')}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
 
     @bot.on(events.NewMessage(pattern='/activate'))
     async def activate_cmd(event):
@@ -235,11 +254,54 @@ def setup_handlers():
             expires = add_vip(target_id, days=days)
             await event.reply(f"✅ تم التفعيل\nID: `{target_id}`\nينتهي: {expires.strftime('%Y-%m-%d')}")
             try:
-                await bot.send_message(target_id, f"💎 تم تفعيل حسابك ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
+                await bot.send_message(target_id, f"💎 **تم تفعيل حسابك في {SOURCE_NAME}** ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
             except:
                 pass
         except Exception as e:
             await event.reply(f"خطأ: {str(e)}\nالاستخدام: /activate user_id days")
+
+    @bot.on(events.NewMessage(pattern='/save'))
+    async def save_media(event):
+        user_id = event.sender_id
+        if not is_vip(user_id): return
+        if not event.photo:
+            await event.reply("❌ لازم تبعت الأمر مع صورة\nمثال: ابعت صورة والكابشن `/save عروض`")
+            return
+        try:
+            name = event.text.split(' ', 1)[1].strip()
+            if user_id not in TEMP_MEDIA: TEMP_MEDIA[user_id] = {}
+            TEMP_MEDIA[user_id][name] = event.photo
+            await event.reply(f"✅ تم حفظ الصورة باسم `{name}`\nلإرسالها اكتب `/send {name}`")
+        except IndexError:
+            await event.reply("❌ اكتب اسم بعد /save\nمثال: `/save عروض_اليوم`")
+
+    @bot.on(events.NewMessage(pattern='/send'))
+    async def send_media(event):
+        user_id = event.sender_id
+        if not is_vip(user_id): return
+        try:
+            name = event.text.split(' ', 1)[1].strip()
+            if user_id not in TEMP_MEDIA or name not in TEMP_MEDIA[user_id]:
+                await event.reply("❌ الاسم ده مش محفوظ عندك\nاكتب `/list` عشان تشوف المحفوظ")
+                return
+            await event.reply(f"تمام، اختار هتبعت `{name}` فين:", buttons=[
+                [Button.inline('🚀 لكل الجروبات', f'sendto_all_{name}')],
+                [Button.inline('🔙 إلغاء', 'back_main')]
+            ])
+        except IndexError:
+            await event.reply("اكتب `/send اسم_الصورة`")
+
+    @bot.on(events.NewMessage(pattern='/list'))
+    async def list_media(event):
+        user_id = event.sender_id
+        if not is_vip(user_id): return
+        if user_id not in TEMP_MEDIA or not TEMP_MEDIA[user_id]:
+            await event.reply("مفيش صور محفوظة عندك")
+            return
+        text = f"🖼 **الصور المحفوظة في {SOURCE_NAME}:**\n\n"
+        for name in TEMP_MEDIA[user_id].keys():
+            text += f"- `{name}`\n"
+        await event.reply(text + "\nلإرسال أي واحدة اكتب `/send الاسم`")
 
     @bot.on(events.CallbackQuery)
     async def callback(event):
@@ -248,6 +310,12 @@ def setup_handlers():
         create_user(user_id, event.sender.username or f"user{user_id}")
         if data == 'contact_admin':
             await event.answer("كلم الأدمن للتفعيل", alert=True)
+            return
+        if data == 'contact_dev': # جديد: زرار راسل المطور
+            await event.edit(f"💎 **للاشتراك المدفوع في {SOURCE_NAME}**\n\nراسل المطور عشان تعرف الأسعار والتفاصيل:", buttons=[
+                [Button.url('👨‍💻 راسل المطور', f'https://t.me/{DEVELOPER_USERNAME}')],
+                [Button.inline('🔙 رجوع', 'back_main')]
+            ])
             return
         if data == 'create_post':
             if not is_vip(user_id):
@@ -305,7 +373,7 @@ def setup_handlers():
             if not accounts:
                 await event.edit("❌ مفيش حسابات", buttons=main_keyboard(user_id))
                 return
-            text = f"📱 **حساباتك** ({len(accounts)})\n\n"
+            text = f"📱 **حساباتك في {SOURCE_NAME}** ({len(accounts)})\n\n"
             buttons = []
             for acc in accounts:
                 acc_id, _, _, phone, username, _, last_used, groups_count = acc
@@ -318,6 +386,33 @@ def setup_handlers():
             delete_account(acc_id, user_id)
             await event.answer("تم الحذف ✅")
             await event.edit("تم حذف الحساب", buttons=main_keyboard(user_id))
+        elif data.startswith('sendto_all_'):
+            name = data.split('_', 2)[2]
+            if user_id not in TEMP_MEDIA or name not in TEMP_MEDIA[user_id]:
+                await event.answer("الصورة مش موجودة", alert=True)
+                return
+            photo = TEMP_MEDIA[user_id][name]
+            accounts = get_user_accounts(user_id)
+            if not accounts:
+                await event.answer("ضيف حسابات الأول", alert=True)
+                return
+            await event.edit(f"جاري إرسال `{name}` لكل الجروبات...")
+            sent = 0
+            for acc in accounts:
+                acc_id, _, session_string, phone, username, _, _, _ = acc
+                client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
+                try:
+                    await client.start()
+                    groups = await get_all_groups(client)
+                    for group in groups:
+                        try:
+                            await client.send_file(group, photo)
+                            sent += 1
+                            await asyncio.sleep(3)
+                        except: pass
+                    await client.disconnect()
+                except: pass
+            await event.edit(f"✅ تم إرسال الصورة لـ {sent} جروب تقريباً", buttons=main_keyboard(user_id))
         elif data == 'admin_panel':
             if not is_admin(user_id):
                 return
@@ -326,7 +421,7 @@ def setup_handlers():
             c.execute("SELECT COUNT(*) FROM accounts")
             acc_count = c.fetchone()[0]
             running, sent, failed = get_campaign_stats()
-            await event.edit(f"👑 **لوحة الأدمن**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
+            await event.edit(f"👑 **لوحة الأدمن - {SOURCE_NAME}**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
         elif data == 'admin_add_vip':
             if not is_admin(user_id):
                 return
@@ -344,10 +439,10 @@ def setup_handlers():
             if not vips:
                 await event.edit("مفيش VIP نشط", buttons=admin_keyboard())
                 return
-            text = f"👑 **قائمة الـVIP** ({len(vips)})\n\n"
+            text = f"👑 **قائمة الـVIP في {SOURCE_NAME}** ({len(vips)})\n\n"
             for vip in vips[:20]:
                 uid, uname, _, exp, _ = vip
-                exp_date = datetime.fromisoformat(exp).strftime('%Y-%m-%d')
+                exp_date = safe_parse_date(exp).strftime('%Y-%m-%d')
                 text += f"`{uid}` @{uname}\n📅 ينتهي: {exp_date}\n\n"
             await event.edit(text, buttons=admin_keyboard())
         elif data == 'admin_stats':
@@ -358,7 +453,7 @@ def setup_handlers():
             c.execute("SELECT COUNT(*) FROM posts")
             total_posts = c.fetchone()[0]
             running, sent, failed = get_campaign_stats()
-            await event.edit(f"📊 **الإحصائيات**\n\n👥 المستخدمين: {total_users}\n📝 المنشورات: {total_posts}\n🚀 حملات شغالة: {running}\n📤 المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
+            await event.edit(f"📊 **إحصائيات {SOURCE_NAME}**\n\n👥 المستخدمين: {total_users}\n📝 المنشورات: {total_posts}\n🚀 حملات شغالة: {running}\n📤 المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
         elif data == 'back_main':
             await event.edit("القائمة الرئيسية:", buttons=main_keyboard(user_id))
 
@@ -366,7 +461,7 @@ def setup_handlers():
     async def handle_message(event):
         user_id = event.sender_id
         text = event.text
-        if text == '/start' or text.startswith('/activate'):
+        if text == '/start' or text.startswith('/activate') or text.startswith('/save') or text.startswith('/send') or text.startswith('/list'):
             return
         if waiting_for.get(user_id) == 'post_content':
             media_id = None
@@ -466,7 +561,7 @@ def setup_handlers():
                 waiting_for[user_id] = None
                 await event.reply(f"✅ تم التفعيل\nID: `{target_id}`\nينتهي: {expires.strftime('%Y-%m-%d')}", buttons=admin_keyboard())
                 try:
-                    await bot.send_message(target_id, f"💎 تم تفعيل حسابك ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
+                    await bot.send_message(target_id, f"💎 **تم تفعيل حسابك في {SOURCE_NAME}** ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
                 except:
                     pass
             except:
@@ -490,7 +585,7 @@ def main():
     init_db()
     bot = TelegramClient('broadcaster_bot', int(API_ID), API_HASH).start(bot_token=BOT_TOKEN)
     setup_handlers()
-    print("بوت النشر شغال...")
+    print(f"{SOURCE_NAME} شغال...")
     bot.run_until_disconnected()
 
 if __name__ == "__main__":

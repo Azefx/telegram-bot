@@ -640,3 +640,10 @@ def setup_handlers():
                 await event.answer("ضيف حسابات الأول", alert=True)
                 return
             await event.edit
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"CRASH ERROR: {e}")
+        import traceback
+        traceback.print_exc()

@@ -21,16 +21,16 @@ DB_FILE = 'hero_data.json'
 
 # --- بيانات الدفع - غيرها ببياناتك ---
 PAYMENT_INFO = {
-    'vodafone': '01012345678', # رقم فودافون كاش
-    'ltc': 'ltc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', # محفظة LTC
-    'ton': 'UQAbcdef1234567890abcdef1234567890abcdef1234567890ab', # محفظة TON
-    'usdt': 'TRC20: TAbcdef1234567890abcdef1234567890a' # محفظة USDT TRC20
+    'vodafone': '01105802898', # رقم فودافون كاش
+    'ltc': 'LZgafAodZxDmjM9Ri51ygZ6dU8UbxE2cPH', # محفظة LTC
+    'ton': 'UQAarGycIaNnngwNAQ1Tek32I3MGroiaeF6p6MxEadimfszt', # محفظة TON
+    'usdt': 'TRC20: TWunFGpcDDc63GTDdNxyDHjZ4VdPS6AsMh' # محفظة USDT TRC20
 }
 
 PRICE_PACKAGES = {
-    '7_days': {'days': 7, 'price': '50 جنيه', 'label': '7 أيام'},
-    '15_days': {'days': 15, 'price': '100 جنيه', 'label': '15 يوم'},
-    '30_days': {'days': 30, 'price': '150 جنيه', 'label': 'شهر كامل'}
+    '7_days': {'days': 7, 'price': '0.5$ - 25 جنية', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '1$ - 50 جنية', 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '3$ - 100 جنية', 'label': 'شهر كامل'}
 }
 
 # --- نظام الحفظ والاشتراكات ---
@@ -169,7 +169,7 @@ async def send_log(event, action, text=""):
         user = await event.get_sender()
         name = user.first_name if user else "Unknown"
         uid = user.id if user else "Unknown"
-        log_msg = f"🔔 **إشعار مراقبة جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}{get_current_time()}"
+        log_msg = f"🔔 **إشعار دخول جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}{get_current_time()}"
         await bot.send_message(ADMIN_ID, log_msg)
     except:
         pass
@@ -207,7 +207,7 @@ def main_menu(uid):
         btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
     if is_admin(uid):
         btns.append([Button.inline("🔐 لوحة الأدمن", b"admin_panel")])
-    btns.append([Button.url('👨‍💻 مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+    btns.append([Button.url('👨‍💻 اضغط لـ مـراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
     return btns
 
 # 🔘 واجهة الإعدادات
@@ -251,7 +251,7 @@ def admin_panel(uid):
     ]
     if is_main_admin(uid):
         btns.append([Button.inline("⬆️ رفع أدمن", b"add_admin"), Button.inline("⬇️ تنزيل أدمن", b"remove_admin")])
-        btns.append([Button.inline("👑 قائمة الأدمنز", b"list_admins")])
+        btns.append([Button.inline("👑 قائمة الادمن", b"list_admins")])
         btns.append([Button.inline("⏳ المدفوعات المعلقة", b"pending_payments")])
     btns.append([Button.inline("🔙 رجوع", b"back_main")])
     return btns
@@ -451,7 +451,7 @@ async def handler(event):
         save_db()
 
         await event.edit(f"🎁 **تم تفعيل التجربة المجانية!**\n\n⏰ صالحة لمدة: 1 ساعة\n📅 تنتهي: {expiry}\n\nدوس /start عشان تبدأ", buttons=main_menu(uid))
-        await send_log(event, "تجربة مجانية", "تم تفعيل تجربة ساعة")
+        await send_log(event, "تجربة مجانية", "تم تفعيل تجربة ساعة من قبل المبرمج")
         return
 
     if data == b"toggle_logs":

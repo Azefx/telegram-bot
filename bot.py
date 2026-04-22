@@ -325,7 +325,7 @@ async def start_user_client():
 async def start(event):
     uid = event.sender_id
     time_display = get_current_time()
-    bot_name = f"🚀 **بوت النشر التلقائي المطور - Programmer Azef**{time_display}"
+    bot_name = f"🚀 **بوت النشر التلقائي المتطور (متخطي الباند تماما) - Programmer Azef**{time_display}"
 
     if event.is_private and db.get('welcome_enabled', True):
         if str(uid) not in db.get('welcomed_users', []):
@@ -341,8 +341,8 @@ async def start(event):
         if str(uid) not in db.get('trial_users', []):
             btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
         btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
-        btns.append([Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
+        btns.append([Button.url('👨‍💻 اضغط لـ مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المبرمج:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
     await event.reply(bot_name, buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
@@ -465,8 +465,6 @@ async def handler(event):
         return
 
     if data == b"toggle_time":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         db['show_time'] = not db.get('show_time', False)
         save_db()
         status = "مفعلة ✅" if db['show_time'] else "معطلة ❌"
@@ -475,8 +473,6 @@ async def handler(event):
         return
 
     if data == b"toggle_reply":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         db['auto_reply_enabled'] = not db.get('auto_reply_enabled', True)
         save_db()
         status = "مفعل ✅" if db['auto_reply_enabled'] else "معطل ❌"
@@ -492,8 +488,6 @@ async def handler(event):
         return
 
     if data == b"toggle_welcome":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         db['welcome_enabled'] = not db.get('welcome_enabled', True)
         save_db()
         status = "مفعل ✅" if db['welcome_enabled'] else "معطل ❌"
@@ -502,8 +496,6 @@ async def handler(event):
         return
 
     if data == b"toggle_format":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         db['use_formatting'] = not db.get('use_formatting', True)
         save_db()
         status = "مفعل ✅" if db['use_formatting'] else "معطل ❌"
@@ -512,8 +504,6 @@ async def handler(event):
         return
 
     if data == b"toggle_mode":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         db['send_all_mode'] = not db.get('send_all_mode', False)
         save_db()
         status = "الكل ✅" if db['send_all_mode'] else "تدوير ✅"
@@ -522,15 +512,11 @@ async def handler(event):
         return
 
     if data == b"edit_reply_text":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         waiting_for[uid] = 'edit_reply_text'
         await event.reply(f"✏️ **النص الحالي:**\n{db.get('auto_reply_text')}\n\nارسل النص الجديد:")
         return
 
     if data == b"edit_welcome_text":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
         waiting_for[uid] = 'edit_welcome_text'
         await event.reply(f"✏️ **نص الترحيب الحالي:**\n{db.get('welcome_text')}\n\nارسل النص الجديد:")
         return

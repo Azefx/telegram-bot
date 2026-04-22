@@ -19,16 +19,16 @@ DB_FILE = 'hero_data.json'
 
 # --- بيانات الدفع - غيرها ببياناتك ---
 PAYMENT_INFO = {
-    'vodafone': '01012345678', # رقم فودافون كاش
-    'ltc': 'ltc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', # محفظة LTC
-    'ton': 'UQAbcdef1234567890abcdef1234567890abcdef1234567890ab', # محفظة TON
-    'usdt': 'TRC20: TAbcdef1234567890abcdef1234567890a' # محفظة USDT TRC20
+    'vodafone': '01105802898', # رقم فودافون كاش
+    'ltc': 'LZgafAodZxDmjM9Ri51ygZ6dU8UbxE2cPH', # محفظة LTC
+    'ton': 'UQAarGycIaNnngwNAQ1Tek32I3MGroiaeF6p6MxEadimfszt', # محفظة TON
+    'usdt': 'TRC20: TWunFGpcDDc63GTDdNxyDHjZ4VdPS6AsMh' # محفظة USDT TRC20
 }
 
 PRICE_PACKAGES = {
-    '7_days': {'days': 7, 'price': '50 جنيه', 'label': '7 أيام'},
-    '15_days': {'days': 15, 'price': '100 جنيه', 'label': '15 يوم'},
-    '30_days': {'days': 30, 'price': '150 جنيه', 'label': 'شهر كامل'}
+    '7_days': {'days': 7, 'price': '0.5$ 🏅 25Eg ', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '1$ 🏅 50Eg ', 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '2$ 🏅 100Eg', 'label': 'شهر كامل'}
 }
 
 # --- نظام الحفظ والاشتراكات ---

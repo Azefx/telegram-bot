@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.tl.types import Channel, Chat, LabeledPrice
+from telethon.tl.types import Channel, Chat
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
 
 # --- البيانات الأساسية ---
@@ -17,10 +17,18 @@ DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
 MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي ""
 DB_FILE = 'hero_data.json'
 
-STAR_PACKAGES = {
-    '7_days': {'days': 7, 'stars': 50, 'label': '7 أيام'},
-    '15_days': {'days': 15, 'stars': 100, 'label': '15 يوم'},
-    '30_days': {'days': 30, 'stars': 150, 'label': 'شهر كامل'}
+# --- بيانات الدفع - غيرها ببياناتك ---
+PAYMENT_INFO = {
+    'vodafone': '01012345678', # رقم فودافون كاش
+    'ltc': 'ltc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', # محفظة LTC
+    'ton': 'UQAbcdef1234567890abcdef1234567890abcdef1234567890ab', # محفظة TON
+    'usdt': 'TRC20: TAbcdef1234567890abcdef1234567890a' # محفظة USDT TRC20
+}
+
+PRICE_PACKAGES = {
+    '7_days': {'days': 7, 'price': '50 جنيه', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '100 جنيه', 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '150 جنيه', 'label': 'شهر كامل'}
 }
 
 # --- نظام الحفظ والاشتراكات ---
@@ -37,7 +45,8 @@ def load_db():
         'sleep_time': 30,
         'msg_text': '',
         'subs': {str(ADMIN_ID): '2099-01-01'},
-        'admins': [ADMIN_ID]
+        'admins': [ADMIN_ID],
+        'pending_payments': {} # طلبات الدفع المعلقة
     }
 
 def save_db():
@@ -109,7 +118,7 @@ def main_menu(uid):
         [Button.inline("🚀 بدء النشر", b"start_post")]
     ]
     if not is_sub(uid):
-        btns.append([Button.inline("💫 اشترك بالنجوم", b"stars_menu")])
+        btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
     if is_admin(uid):
         btns.append([Button.inline("🔐 لوحة الأدمن", b"admin_panel")])
     btns.append([Button.url('👨‍💻 مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
@@ -137,17 +146,27 @@ def admin_panel(uid):
     ]
     if is_main_admin(uid):
         btns.append([Button.inline("⬆️ رفع أدمن", b"add_admin"), Button.inline("⬇️ تنزيل أدمن", b"remove_admin")])
-        btns.append([Button.inline("👑 قائمة الأدمنز", b"list_admins")])
+        btns.append([Button.inline("👑 قائمة الادمن", b"list_admins")])
+        btns.append([Button.inline("⏳ المدفوعات المعلقة", b"pending_payments")])
     btns.append([Button.inline("🔙 رجوع", b"back_main")])
     return btns
 
-# 🔘 قائمة النجوم
-def stars_menu_keyboard():
+# 🔘 قائمة الدفع
+def payment_menu_keyboard():
     return [
-        [Button.inline(f'7 أيام - 50⭐', 'buy_7_days')],
-        [Button.inline(f'15 يوم - 100⭐', 'buy_15_days')],
-        [Button.inline(f'شهر كامل - 150⭐', 'buy_30_days')],
+        [Button.inline(f'7 أيام - {PRICE_PACKAGES["7_days"]["price"]}', 'pay_7_days')],
+        [Button.inline(f'15 يوم - {PRICE_PACKAGES["15_days"]["price"]}', 'pay_15_days')],
+        [Button.inline(f'شهر كامل - {PRICE_PACKAGES["30_days"]["price"]}', 'pay_30_days')],
         [Button.inline('🔙 رجوع', 'back_main')]
+    ]
+
+def payment_methods_keyboard(package):
+    return [
+        [Button.inline('📱 فودافون كاش', f'method_vodafone_{package}')],
+        [Button.inline('💎 LTC', f'method_ltc_{package}')],
+        [Button.inline('💎 TON', f'method_ton_{package}')],
+        [Button.inline('💵 USDT TRC20', f'method_usdt_{package}')],
+        [Button.inline('🔙 رجوع', 'payment_menu')]
     ]
 
 # --- استقبال الأوامر ---
@@ -155,31 +174,13 @@ def stars_menu_keyboard():
 async def start(event):
     uid = event.sender_id
     if not is_sub(uid):
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💫 تقدر تشترك بالنجوم أو راسل المطور:\n🆔 الايدي: `{uid}`", buttons=[[Button.inline("💫 اشترك بالنجوم", b"stars_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`", buttons=[[Button.inline("💳 اشترك الآن", b"payment_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
     await event.reply("🚀 **بوت النشر التلقائي المطور - Programmer Azef**", buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
 async def admin_cmd(event):
     if is_admin(event.sender_id):
         await event.reply("👑 **لوحة التحكم:**", buttons=admin_panel(event.sender_id))
-
-# --- معالجة الدفع بالنجوم ---
-@bot.on(events.NewMessage(func=lambda e: e.message.successful_payment))
-async def payment_handler(event):
-    payment = event.message.successful_payment
-    payload = payment.invoice_payload
-    user_id = event.sender_id
-
-    if payload.startswith('vip_'):
-        parts = payload.split('_')
-        package = parts[1] + '_' + parts[2]
-        if package in STAR_PACKAGES:
-            days = STAR_PACKAGES[package]['days']
-            expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
-            db['subs'][str(user_id)] = expiry
-            save_db()
-            await bot.send_message(user_id, f"✅ **تم تفعيل اشتراكك بنجاح!**\n\n🎁 الباقة: {STAR_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}\n\nدوس /start عشان تبدأ", buttons=main_menu(user_id))
-            await bot.send_message(ADMIN_ID, f"💫 **دفع جديد بالنجوم**\n👤 المستخدم: `{user_id}`\n📦 الباقة: {STAR_PACKAGES[package]['label']}\n⭐ المبلغ: {payment.total_amount} نجمة")
 
 # --- محرك النشر الذكي ---
 async def auto_publisher(event):
@@ -221,27 +222,105 @@ async def handler(event):
     global is_posting
     data, uid = event.data, event.sender_id
 
-    if data == b"stars_menu":
-        await event.edit("💫 **اشترك بالنجوم**\n\nاختر الباقة اللي تناسبك:", buttons=stars_menu_keyboard())
+    if data == b"payment_menu":
+        await event.edit("💳 **اختر الباقة المناسبة**\n\nكل الباقات تعطيك صلاحية كاملة للبوت:", buttons=payment_menu_keyboard())
         return
 
-    if data.startswith(b'buy_'):
+    if data.startswith(b'pay_'):
         package = data.decode().split('_')[1] + '_' + data.decode().split('_')[2]
-        if package not in STAR_PACKAGES:
+        if package not in PRICE_PACKAGES:
             return
-        pkg = STAR_PACKAGES[package]
-        await event.edit(f"💫 **تأكيد الشراء**\n\nالباقة: {pkg['label']}\nالسعر: {pkg['stars']} نجمة\n\nدوس الدفع تحت عشان تكمل", buttons=[
-            [Button.buy(f'💫 ادفع {pkg["stars"]} نجمة')],
-            [Button.inline('🔙 رجوع', 'stars_menu')]
+        pkg = PRICE_PACKAGES[package]
+        await event.edit(f"💳 **الباقة:** {pkg['label']}\n💰 **السعر:** {pkg['price']}\n\nاختر طريقة الدفع:", buttons=payment_methods_keyboard(package))
+        return
+
+    if data.startswith(b'method_'):
+        parts = data.decode().split('_')
+        method = parts[1]
+        package = parts[2] + '_' + parts[3]
+        
+        if package not in PRICE_PACKAGES:
+            return
+            
+        pkg = PRICE_PACKAGES[package]
+        info = PAYMENT_INFO[method]
+        
+        method_names = {'vodafone': 'فودافون كاش', 'ltc': 'LTC', 'ton': 'TON', 'usdt': 'USDT TRC20'}
+        
+        msg = f"💳 **الدفع عبر {method_names[method]}**\n\n"
+        msg += f"📦 الباقة: {pkg['label']}\n"
+        msg += f"💰 المبلغ: {pkg['price']}\n\n"
+        msg += f"📍 **حول على:**\n`{info}`\n\n"
+        msg += "⚠️ **مهم جداً:**\n"
+        msg += "1. حول المبلغ بالظبط\n"
+        msg += "2. خد سكرين شوت أو رقم العملية\n"
+        msg += "3. دوس 'أرسلت المبلغ' تحت وابعت الإثبات\n\n"
+        msg += "✅ هيتم التفعيل خلال دقائق بعد التأكيد"
+        
+        waiting_for[uid] = f"payment_proof_{package}_{method}"
+        
+        await event.edit(msg, buttons=[
+            [Button.inline('✅ أرسلت المبلغ', f'confirm_payment_{package}_{method}')],
+            [Button.inline('🔙 رجوع', f'pay_{package}')]
         ])
-        await bot.send_invoice(
-            uid,
-            title=f"Programmer Azef - {pkg['label']}",
-            description=f"اشتراك VIP لمدة {pkg['label']} في بوت Programmer Azef",
-            currency='XTR',
-            prices=[LabeledPrice(label=pkg['label'], amount=pkg['stars'])],
-            payload=f"vip_{package}_{uid}"
-        )
+        return
+
+    if data.startswith(b'confirm_payment_'):
+        parts = data.decode().split('_')
+        package = parts[2] + '_' + parts[3]
+        method = parts[4]
+        waiting_for[uid] = f"payment_proof_{package}_{method}"
+        await event.edit("📸 **تمام، ابعت دلوقتي:**\n\n1. سكرين شوت التحويل\n2. أو رقم العملية\n3. أو أي إثبات\n\nالمطور هيأكد ويفعلك فوراً")
+        return
+
+    if data.startswith(b'approve_payment_'):
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        
+        parts = data.decode().split('_')
+        user_id = int(parts[2])
+        package = parts[3] + '_' + parts[4]
+        
+        days = PRICE_PACKAGES[package]['days']
+        expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
+        db['subs'][str(user_id)] = expiry
+        save_db()
+        
+        # احذف من المعلقة
+        db['pending_payments'].pop(str(user_id), None)
+        save_db()
+        
+        await event.edit(f"✅ **تم التفعيل بنجاح**\n\n👤 المستخدم: `{user_id}`\n📦 الباقة: {PRICE_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}")
+        await bot.send_message(user_id, f"✅ **تم تفعيل اشتراكك بنجاح!**\n\n🎁 الباقة: {PRICE_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}\n\nدوس /start عشان تبدأ", buttons=main_menu(user_id))
+        return
+
+    if data.startswith(b'reject_payment_'):
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        
+        user_id = int(data.decode().split('_')[2])
+        db['pending_payments'].pop(str(user_id), None)
+        save_db()
+        await event.edit(f"❌ **تم رفض الطلب**\n\n👤 المستخدم: `{user_id}`")
+        await bot.send_message(user_id, "❌ **تم رفض طلب الدفع**\n\nممكن الإثبات مش واضح أو المبلغ غلط.\nراسل المطور للتوضيح:", buttons=[[Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+        return
+
+    if data == b"pending_payments":
+        if not is_main_admin(uid):
+            return
+        pending = db.get('pending_payments', {})
+        if not pending:
+            return await event.answer("لا يوجد طلبات معلقة", alert=True)
+        
+        msg = "⏳ **المدفوعات المعلقة:**\n\n"
+        btns = []
+        for user_id, info in pending.items():
+            msg += f"👤 `{user_id}` - {info['package']} - {info['method']}\n"
+            btns.append([Button.inline(f"✅ تفعيل {user_id}", f"approve_payment_{user_id}_{info['package_key']}")])
+            btns.append([Button.inline(f"❌ رفض {user_id}", f"reject_payment_{user_id}")])
+        
+        btns.append([Button.inline("🔙 رجوع", b"admin_panel")])
+        await event.edit(msg, buttons=btns)
         return
 
     if not is_sub(uid):
@@ -304,7 +383,39 @@ async def handler(event):
 async def inputs(event):
     uid = event.sender_id
     if not event.text or event.text.startswith('/'):
+        # لو باعت صورة/فايل كإثبات دفع
+        if event.photo or event.document:
+            step = waiting_for.get(uid)
+            if step and step.startswith('payment_proof_'):
+                parts = step.split('_')
+                package = parts[2] + '_' + parts[3]
+                method = parts[4]
+                
+                # احفظ الطلب
+                db['pending_payments'][str(uid)] = {
+                    'package': PRICE_PACKAGES[package]['label'],
+                    'package_key': package,
+                    'method': method,
+                    'time': datetime.now().strftime('%Y-%m-%d %H:%M')
+                }
+                save_db()
+                
+                # ابعت للمطور
+                method_names = {'vodafone': 'فودافون كاش', 'ltc': 'LTC', 'ton': 'TON', 'usdt': 'USDT'}
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"💰 **طلب دفع جديد**\n\n👤 المستخدم: `{uid}`\n📦 الباقة: {PRICE_PACKAGES[package]['label']}\n💳 الطريقة: {method_names[method]}\n💰 المبلغ: {PRICE_PACKAGES[package]['price']}\n\n👇 الإثبات تحت:",
+                    buttons=[
+                        [Button.inline('✅ تفعيل', f'approve_payment_{uid}_{package}')],
+                        [Button.inline('❌ رفض', f'reject_payment_{uid}')]
+                    ]
+                )
+                await bot.forward_messages(ADMIN_ID, event.message)
+                
+                await event.reply("✅ **تم إرسال الإثبات للمطور**\n\nهيتم المراجعة والتفعيل خلال دقائق ⏳")
+                waiting_for[uid] = None
         return
+        
     step = waiting_for.get(uid)
 
     if step == 'get_id':

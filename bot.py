@@ -9,7 +9,7 @@ from telethon.tl.types import InputPeerEmpty, Channel, Chat, LabeledPrice, User
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
 # ======== الإعدادات الأساسية ========
-SOURCE_NAME = "Source Programmer Azef"
+SOURCE_NAME = "Programmer Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -224,8 +224,7 @@ async def get_all_groups(client):
     except Exception as e:
         print(f"Error getting groups: {e}")
     return groups
-
-# ======== المهام الرئيسية ========
+    # ======== المهام الرئيسية ========
 async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, delay_max):
     post = get_post(post_id)
     if not post:
@@ -366,8 +365,7 @@ def style_keyboard():
 
 def emoji_keyboard():
     return [[Button.inline('🔥', 'emoji_fire'), Button.inline('📢', 'emoji_megaphone')], [Button.inline('⭐', 'emoji_star'), Button.inline('💎', 'emoji_gem')], [Button.inline('✨ اكتب إيموجي مخصص', 'emoji_custom')], [Button.inline('بدون إيموجي', 'emoji_none')]]
-
-# ======== الهاندلرز ========
+    # ======== الهاندلرز ========
 def setup_handlers():
     @bot.on(events.NewMessage(pattern='/start'))
     async def start(event):
@@ -618,29 +616,4 @@ def setup_handlers():
             text += "\n**ازاي بيشتغل:**\nلما حد يبعتلك خاص فيه الكلمة المفتاحية، البوت يرد عليه تلقائي"
             buttons.append([Button.inline('🔙 رجوع', 'back_main')])
             await event.edit(text, buttons=buttons)
-        elif data == 'add_auto_reply':
-            waiting_for[user_id] = 'auto_reply_keyword'
-            await event.edit("📝 **أضف رد تلقائي**\n\nالخطوة 1/2: ابعت الكلمة المفتاحية\n\nمثال: `السعر` أو `بكام`\nلما حد يكتب الكلمة دي البوت هيرد تلقائي")
-        elif data.startswith('del_reply_'):
-            rid = int(data.split('_')[2])
-            delete_auto_reply(rid, user_id)
-            await event.answer("تم الحذف ✅")
-            await event.edit("تم حذف الرد", buttons=main_keyboard(user_id))
-        elif data == 'welcome_menu':
-            waiting_for[user_id] = 'welcome_group_id'
-            await event.edit("👋 **رسالة الترحيب**\n\nابعت ID الجروب اللي عايز تضيف فيه رسالة ترحيب\n\nهات الـID من @userinfobot\nابعتله /id في الجروب\n\nمثال: `-1001234567890`\n\nاستخدم `{name}` عشان البوت يكتب اسم العضو الجديد")
-        elif data.startswith('sendto_all_'):
-            name = data.split('_', 2)[2]
-            if user_id not in TEMP_MEDIA or name not in TEMP_MEDIA[user_id]:
-                await event.answer("الصورة مش موجودة", alert=True)
-                return
-            photo = TEMP_MEDIA[user_id][name]
-            accounts = get_user_accounts(user_id)
-            if not accounts:
-                await event.answer("ضيف حسابات الأول", alert=True)
-                return
-            await event.edit(f"جاري إرسال `{name}` لكل الجروبات...")
-            sent = 0
-            for acc in accounts:
-                acc_id, _, session_string, phone, username, _, _, _, _, _ = acc
-                client = TelegramClient(StringSession(session_string), int(API_ID),
+        elif

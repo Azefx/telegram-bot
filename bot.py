@@ -61,7 +61,7 @@ async def send_log(event, action, text=""):
         user = await event.get_sender()
         name = user.first_name if user else "Unknown"
         uid = user.id if user else "Unknown"
-        log_msg = f"🔔 **إشعار مراقبة جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}"
+        log_msg = f"🔔 **إشعار دخول جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}"
         await bot.send_message(ADMIN_ID, log_msg)
     except:
         pass
@@ -95,9 +95,9 @@ def main_menu(uid):
         [Button.inline("🚀 بدء النشر", b"start_post")]
     ]
     if uid == ADMIN_ID:
-        btns.append([Button.inline("🔐 نظام الاشتراك", b"admin_panel")])
+        btns.append([Button.inline("🔐 نظام الاشتراك المدفوع", b"admin_panel")])
     # زر مراسلة المبرمج ظاهر للكل
-    btns.append([Button.url('👨‍💻 مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+    btns.append([Button.url('👨‍💻 اضغط لمراسله المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
     return btns
 
 # 🔘 واجهة الإعدادات

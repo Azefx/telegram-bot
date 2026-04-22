@@ -26,9 +26,9 @@ PAYMENT_INFO = {
 }
 
 PRICE_PACKAGES = {
-    '7_days': {'days': 7, 'price': '0.5$ 🏅 25Eg ', 'label': '7 أيام'},
-    '15_days': {'days': 15, 'price': '1$ 🏅 50Eg ', 'label': '15 يوم'},
-    '30_days': {'days': 30, 'price': '2$ 🏅 100Eg', 'label': 'شهر كامل'}
+    '7_days': {'days': 7, 'price': '0.5$ 🏅 25 جنية ', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '1$ 🏅 50 جنية ', 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '2$ 🏅 100 جنية', 'label': 'شهر كامل'}
 }
 
 # --- نظام الحفظ والاشتراكات ---
@@ -174,7 +174,7 @@ def payment_methods_keyboard(package):
 async def start(event):
     uid = event.sender_id
     if not is_sub(uid):
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`", buttons=[[Button.inline("💳 اشترك الآن", b"payment_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+        return await event.reply(f"⚠️ **عذراً ‹:اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`", buttons=[[Button.inline("💳 اشترك الآن", b"payment_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
     await event.reply("🚀 **بوت النشر التلقائي المطور - Programmer Azef**", buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))

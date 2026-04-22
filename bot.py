@@ -25,11 +25,10 @@ PAYMENT_INFO = {
     'ton': 'UQAarGycIaNnngwNAQ1Tek32I3MGroiaeF6p6MxEadimfszt', # محفظة TON
     'usdt': 'TRC20: TWunFGpcDDc63GTDdNxyDHjZ4VdPS6AsMh' # محفظة USDT TRC20
 }
-
 PRICE_PACKAGES = {
-    '7_days': {'days': 7, 'price': '0.5$🏅25 جـنية', 'label': '7 أيام'},
-    '15_days': {'days': 15, 'price': '1$🏅50 جـنية, 'label': '15 يوم'},
-    '30_days': {'days': 30, 'price': '3$🏅100 جـنية', 'label': 'شهر كامل'}
+    '7_days': {'days': 7, 'price': '0.5$ - 25 جنيه', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '1$ - 50 جنيه', 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '3$ - 100 جنيه', 'label': 'شهر كامل'}
 }
 
 COUNTRIES = {

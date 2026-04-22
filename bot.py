@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import pytz
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
@@ -26,9 +27,23 @@ PAYMENT_INFO = {
 }
 
 PRICE_PACKAGES = {
-    '7_days': {'days': 7, 'price': '0.5$ 🏅 25 جنية ', 'label': '7 أيام'},
-    '15_days': {'days': 15, 'price': '1$ 🏅 50 جنية ', 'label': '15 يوم'},
-    '30_days': {'days': 30, 'price': '2$ 🏅 100 جنية', 'label': 'شهر كامل'}
+    '7_days': {'days': 7, 'price': '0.5$🏅25 جـنية', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '1$🏅50 جـنية, 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '3$🏅100 جـنية', 'label': 'شهر كامل'}
+}
+
+COUNTRIES = {
+    'eg': {'name': '🇪🇬 مصر', 'tz': 'Africa/Cairo'},
+    'sa': {'name': '🇸🇦 السعودية', 'tz': 'Asia/Riyadh'},
+    'ae': {'name': '🇦🇪 الإمارات', 'tz': 'Asia/Dubai'},
+    'kw': {'name': '🇰🇼 الكويت', 'tz': 'Asia/Kuwait'},
+    'qa': {'name': '🇶🇦 قطر', 'tz': 'Asia/Qatar'},
+    'bh': {'name': '🇧🇭 البحرين', 'tz': 'Asia/Bahrain'},
+    'om': {'name': '🇴🇲 عمان', 'tz': 'Asia/Muscat'},
+    'jo': {'name': '🇯🇴 الأردن', 'tz': 'Asia/Amman'},
+    'lb': {'name': '🇱🇧 لبنان', 'tz': 'Asia/Beirut'},
+    'ma': {'name': '🇲🇦 المغرب', 'tz': 'Africa/Casablanca'},
+    'gmt': {'name': '🌍 توقيت جرينتش', 'tz': 'UTC'}
 }
 
 # --- نظام الحفظ والاشتراكات ---
@@ -36,7 +51,20 @@ def load_db():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                if 'logs_enabled' not in data:
+                    data['logs_enabled'] = True
+                if 'pending_payments' not in data:
+                    data['pending_payments'] = {}
+                if 'show_time' not in data:
+                    data['show_time'] = False
+                if 'timezone' not in data:
+                    data['timezone'] = 'Africa/Cairo'
+                if 'auto_reply_enabled' not in data:
+                    data['auto_reply_enabled'] = True
+                if 'auto_reply_text' not in data:
+                    data['auto_reply_text'] = f'تفضل خاص @{DEVELOPER_USERNAME}'
+                return data
         except:
             pass
     return {
@@ -46,7 +74,12 @@ def load_db():
         'msg_text': '',
         'subs': {str(ADMIN_ID): '2099-01-01'},
         'admins': [ADMIN_ID],
-        'pending_payments': {} # طلبات الدفع المعلقة
+        'pending_payments': {},
+        'logs_enabled': True,
+        'show_time': False,
+        'timezone': 'Africa/Cairo',
+        'auto_reply_enabled': True,
+        'auto_reply_text': f'تفضل خاص @{DEVELOPER_USERNAME}'
     }
 
 def save_db():
@@ -57,6 +90,7 @@ db = load_db()
 waiting_for = {}
 login_temp = {}
 is_posting = False
+user_client = None # للرد التلقائي
 
 bot = TelegramClient('Hero_Fix', API_ID, API_HASH)
 
@@ -80,12 +114,24 @@ def is_sub(uid):
             pass
     return False
 
+def get_current_time():
+    if not db.get('show_time', False):
+        return ""
+    try:
+        tz = pytz.timezone(db.get('timezone', 'Africa/Cairo'))
+        now = datetime.now(tz)
+        return f"\n🕐 {now.strftime('%I:%M %p - %d/%m/%Y')}"
+    except:
+        return ""
+
 async def send_log(event, action, text=""):
+    if not db.get('logs_enabled', True):
+        return
     try:
         user = await event.get_sender()
         name = user.first_name if user else "Unknown"
         uid = user.id if user else "Unknown"
-        log_msg = f"🔔 **إشعار مراقبة جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}"
+        log_msg = f"🔔 **إشعار مراقبة جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}{get_current_time()}"
         await bot.send_message(ADMIN_ID, log_msg)
     except:
         pass
@@ -128,8 +174,20 @@ def main_menu(uid):
 def settings_menu():
     status = "🟢 مفعل ومربوط" if db['session'] else "🔴 غير مربوط"
     groups_count = len(db['super_groups'])
+    logs_status = "🔔 الإشعارات: مفعلة" if db.get('logs_enabled', True) else "🔕 الإشعارات: معطلة"
+    time_status = "🕐 الساعة: مفعلة" if db.get('show_time', False) else "🕐 الساعة: معطلة"
+    reply_status = "💬 الرد التلقائي: مفعل" if db.get('auto_reply_enabled', True) else "💬 الرد التلقائي: معطل"
+
+    current_tz = db.get('timezone', 'Africa/Cairo')
+    country_name = next((v['name'] for k, v in COUNTRIES.items() if v['tz'] == current_tz), '🌍 غير محدد')
+
     return [
         [Button.inline(status, b"none")],
+        [Button.inline(logs_status, b"toggle_logs")],
+        [Button.inline(time_status, b"toggle_time")],
+        [Button.inline(reply_status, b"toggle_reply")],
+        [Button.inline(f"🌍 الدولة: {country_name}", b"choose_country")],
+        [Button.inline("✏️ تعديل نص الرد", b"edit_reply_text")],
         [Button.inline("📥 جلب المجموعات تلقائي", b"fetch_groups")],
         [Button.inline(f"👥 السوبرات: {groups_count}", b"show_links")],
         [Button.inline("➕ إضافة يدوي", b"add_links"), Button.inline("👤 ربط حساب", b"login_phone")],
@@ -137,6 +195,14 @@ def settings_menu():
         [Button.inline("🔴 إيقاف", b"stop_post"), Button.inline("🟢 بدء النشر", b"start_post")],
         [Button.inline("🔙 رجوع", b"back_main")]
     ]
+
+# 🔘 قائمة الدول
+def countries_menu():
+    btns = []
+    for code, info in COUNTRIES.items():
+        btns.append([Button.inline(info['name'], f"set_country_{code}")])
+    btns.append([Button.inline("🔙 رجوع", b"settings")])
+    return btns
 
 # 🔘 لوحة الأدمن
 def admin_panel(uid):
@@ -146,7 +212,7 @@ def admin_panel(uid):
     ]
     if is_main_admin(uid):
         btns.append([Button.inline("⬆️ رفع أدمن", b"add_admin"), Button.inline("⬇️ تنزيل أدمن", b"remove_admin")])
-        btns.append([Button.inline("👑 قائمة الادمن", b"list_admins")])
+        btns.append([Button.inline("👑 قائمة الأدمنز", b"list_admins")])
         btns.append([Button.inline("⏳ المدفوعات المعلقة", b"pending_payments")])
     btns.append([Button.inline("🔙 رجوع", b"back_main")])
     return btns
@@ -169,13 +235,69 @@ def payment_methods_keyboard(package):
         [Button.inline('🔙 رجوع', 'payment_menu')]
     ]
 
+# --- تشغيل الحساب المربوط للرد التلقائي ---
+async def start_user_client():
+    global user_client
+    if not db['session'] or not db.get('auto_reply_enabled', True):
+        return
+
+    try:
+        if user_client and user_client.is_connected():
+            await user_client.disconnect()
+
+        user_client = TelegramClient(StringSession(db['session']), API_ID, API_HASH)
+        await user_client.start()
+
+        @user_client.on(events.NewMessage(incoming=True))
+        async def auto_reply_handler(event):
+            if not db.get('auto_reply_enabled', True):
+                return
+
+            # بس في الجروبات
+            if not event.is_group:
+                return
+
+            # تجاهل رسايلك انت
+            if event.sender_id == (await user_client.get_me()).id:
+                return
+
+            me = await user_client.get_me()
+            text = event.message.text or ""
+
+            # تحقق لو عمل منشن أو رد عليك
+            is_mentioned = me.username and f"@{me.username.lower()}" in text.lower()
+            is_reply_to_me = event.message.reply_to and event.message.reply_to.reply_to_msg_id
+
+            if is_reply_to_me:
+                try:
+                    reply_msg = await event.get_reply_message()
+                    if reply_msg and reply_msg.sender_id == me.id:
+                        is_reply_to_me = True
+                    else:
+                        is_reply_to_me = False
+                except:
+                    is_reply_to_me = False
+
+            if is_mentioned or is_reply_to_me:
+                try:
+                    await event.reply(db.get('auto_reply_text', f'تفضل خاص @{DEVELOPER_USERNAME}'))
+                except:
+                    pass
+
+        print("✅ الرد التلقائي شغال")
+    except Exception as e:
+        print(f"❌ خطأ في تشغيل الرد التلقائي: {e}")
+
 # --- استقبال الأوامر ---
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
     uid = event.sender_id
+    time_display = get_current_time()
+    bot_name = f"🚀 **بوت النشر التلقائي المطور - Programmer Azef**{time_display}"
+
     if not is_sub(uid):
-        return await event.reply(f"⚠️ **عذراً ‹:اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`", buttons=[[Button.inline("💳 اشترك الآن", b"payment_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
-    await event.reply("🚀 **بوت النشر التلقائي المطور - Programmer Azef**", buttons=main_menu(uid))
+        return await event.reply(f"⚠️ **عذراً ، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=[[Button.inline("💳 اشترك الآن", b"payment_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+    await event.reply(bot_name, buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
 async def admin_cmd(event):
@@ -196,7 +318,7 @@ async def auto_publisher(event):
     client = TelegramClient(StringSession(db['session']), API_ID, API_HASH)
     try:
         await client.connect()
-        await event.reply(f"✅ **تم تشغيل المحرك الذكي للنشر..**\n📊 عدد الجروبات: {len(db['super_groups'])}")
+        await event.reply(f"✅ **تم تشغيل المحرك الذكي للنشر..**\n📊 عدد الجروبات: {len(db['super_groups'])}{get_current_time()}")
         while is_posting:
             for target in db['super_groups']:
                 if not is_posting:
@@ -205,7 +327,7 @@ async def auto_publisher(event):
                     await client.send_message(int(target), db['msg_text'])
                     await asyncio.sleep(db['sleep_time'])
                 except FloodWaitError as e:
-                    await event.reply(f"⚠️ حماية: سأنتظر {e.seconds} ثانية.")
+                    await event.reply(f"⚠️ حماية: سأنتظر {e.seconds} ثانية.{get_current_time()}")
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
                     print(f"Error sending to {target}: {e}")
@@ -221,6 +343,68 @@ async def auto_publisher(event):
 async def handler(event):
     global is_posting
     data, uid = event.data, event.sender_id
+
+    if data == b"toggle_logs":
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        db['logs_enabled'] = not db.get('logs_enabled', True)
+        save_db()
+        status = "مفعلة ✅" if db['logs_enabled'] else "معطلة ❌"
+        await event.answer(f"الإشعارات {status}", alert=True)
+        await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
+        return
+
+    if data == b"toggle_time":
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        db['show_time'] = not db.get('show_time', False)
+        save_db()
+        status = "مفعلة ✅" if db['show_time'] else "معطلة ❌"
+        await event.answer(f"الساعة {status}", alert=True)
+        await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
+        return
+
+    if data == b"toggle_reply":
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        db['auto_reply_enabled'] = not db.get('auto_reply_enabled', True)
+        save_db()
+        status = "مفعل ✅" if db['auto_reply_enabled'] else "معطل ❌"
+        await event.answer(f"الرد التلقائي {status}", alert=True)
+
+        # شغل أو وقف الرد التلقائي
+        if db['auto_reply_enabled']:
+            asyncio.create_task(start_user_client())
+        else:
+            if user_client and user_client.is_connected():
+                await user_client.disconnect()
+
+        await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
+        return
+
+    if data == b"edit_reply_text":
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        waiting_for[uid] = 'edit_reply_text'
+        await event.reply(f"✏️ **النص الحالي:**\n{db.get('auto_reply_text')}\n\nارسل النص الجديد:")
+        return
+
+    if data == b"choose_country":
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        await event.edit("🌍 **اختر الدولة/التوقيت:**", buttons=countries_menu())
+        return
+
+    if data.startswith(b'set_country_'):
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        code = data.decode().split('_')[2]
+        if code in COUNTRIES:
+            db['timezone'] = COUNTRIES[code]['tz']
+            save_db()
+            await event.answer(f"تم اختيار {COUNTRIES[code]['name']}", alert=True)
+            await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
+        return
 
     if data == b"payment_menu":
         await event.edit("💳 **اختر الباقة المناسبة**\n\nكل الباقات تعطيك صلاحية كاملة للبوت:", buttons=payment_menu_keyboard())
@@ -238,15 +422,15 @@ async def handler(event):
         parts = data.decode().split('_')
         method = parts[1]
         package = parts[2] + '_' + parts[3]
-        
+
         if package not in PRICE_PACKAGES:
             return
-            
+
         pkg = PRICE_PACKAGES[package]
         info = PAYMENT_INFO[method]
-        
+
         method_names = {'vodafone': 'فودافون كاش', 'ltc': 'LTC', 'ton': 'TON', 'usdt': 'USDT TRC20'}
-        
+
         msg = f"💳 **الدفع عبر {method_names[method]}**\n\n"
         msg += f"📦 الباقة: {pkg['label']}\n"
         msg += f"💰 المبلغ: {pkg['price']}\n\n"
@@ -256,9 +440,9 @@ async def handler(event):
         msg += "2. خد سكرين شوت أو رقم العملية\n"
         msg += "3. دوس 'أرسلت المبلغ' تحت وابعت الإثبات\n\n"
         msg += "✅ هيتم التفعيل خلال دقائق بعد التأكيد"
-        
+
         waiting_for[uid] = f"payment_proof_{package}_{method}"
-        
+
         await event.edit(msg, buttons=[
             [Button.inline('✅ أرسلت المبلغ', f'confirm_payment_{package}_{method}')],
             [Button.inline('🔙 رجوع', f'pay_{package}')]
@@ -276,20 +460,19 @@ async def handler(event):
     if data.startswith(b'approve_payment_'):
         if not is_main_admin(uid):
             return await event.answer("للمطور فقط!", alert=True)
-        
+
         parts = data.decode().split('_')
         user_id = int(parts[2])
         package = parts[3] + '_' + parts[4]
-        
+
         days = PRICE_PACKAGES[package]['days']
         expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
         db['subs'][str(user_id)] = expiry
         save_db()
-        
-        # احذف من المعلقة
+
         db['pending_payments'].pop(str(user_id), None)
         save_db()
-        
+
         await event.edit(f"✅ **تم التفعيل بنجاح**\n\n👤 المستخدم: `{user_id}`\n📦 الباقة: {PRICE_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}")
         await bot.send_message(user_id, f"✅ **تم تفعيل اشتراكك بنجاح!**\n\n🎁 الباقة: {PRICE_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}\n\nدوس /start عشان تبدأ", buttons=main_menu(user_id))
         return
@@ -297,7 +480,7 @@ async def handler(event):
     if data.startswith(b'reject_payment_'):
         if not is_main_admin(uid):
             return await event.answer("للمطور فقط!", alert=True)
-        
+
         user_id = int(data.decode().split('_')[2])
         db['pending_payments'].pop(str(user_id), None)
         save_db()
@@ -311,14 +494,14 @@ async def handler(event):
         pending = db.get('pending_payments', {})
         if not pending:
             return await event.answer("لا يوجد طلبات معلقة", alert=True)
-        
+
         msg = "⏳ **المدفوعات المعلقة:**\n\n"
         btns = []
         for user_id, info in pending.items():
             msg += f"👤 `{user_id}` - {info['package']} - {info['method']}\n"
             btns.append([Button.inline(f"✅ تفعيل {user_id}", f"approve_payment_{user_id}_{info['package_key']}")])
             btns.append([Button.inline(f"❌ رفض {user_id}", f"reject_payment_{user_id}")])
-        
+
         btns.append([Button.inline("🔙 رجوع", b"admin_panel")])
         await event.edit(msg, buttons=btns)
         return
@@ -383,15 +566,13 @@ async def handler(event):
 async def inputs(event):
     uid = event.sender_id
     if not event.text or event.text.startswith('/'):
-        # لو باعت صورة/فايل كإثبات دفع
         if event.photo or event.document:
             step = waiting_for.get(uid)
             if step and step.startswith('payment_proof_'):
                 parts = step.split('_')
                 package = parts[2] + '_' + parts[3]
                 method = parts[4]
-                
-                # احفظ الطلب
+
                 db['pending_payments'][str(uid)] = {
                     'package': PRICE_PACKAGES[package]['label'],
                     'package_key': package,
@@ -399,8 +580,7 @@ async def inputs(event):
                     'time': datetime.now().strftime('%Y-%m-%d %H:%M')
                 }
                 save_db()
-                
-                # ابعت للمطور
+
                 method_names = {'vodafone': 'فودافون كاش', 'ltc': 'LTC', 'ton': 'TON', 'usdt': 'USDT'}
                 await bot.send_message(
                     ADMIN_ID,
@@ -411,14 +591,19 @@ async def inputs(event):
                     ]
                 )
                 await bot.forward_messages(ADMIN_ID, event.message)
-                
+
                 await event.reply("✅ **تم إرسال الإثبات للمطور**\n\nهيتم المراجعة والتفعيل خلال دقائق ⏳")
                 waiting_for[uid] = None
         return
-        
+
     step = waiting_for.get(uid)
 
-    if step == 'get_id':
+    if step == 'edit_reply_text':
+        db['auto_reply_text'] = event.text
+        save_db()
+        await event.reply(f"✅ تم تحديث نص الرد التلقائي:\n\n{event.text}")
+        waiting_for[uid] = None
+    elif step == 'get_id':
         waiting_for[uid] = f"get_days_{event.text.strip()}"
         await event.reply("🕒 كم عدد أيام الاشتراك؟")
     elif step == 'get_admin_id':
@@ -498,6 +683,8 @@ async def inputs(event):
             await event.reply("🎉 تم ربط الحساب الشخصي بنجاح!", buttons=main_menu(uid))
             waiting_for[uid] = None
             login_temp.pop(uid, None)
+            # شغل الرد التلقائي تلقائي
+            asyncio.create_task(start_user_client())
         except SessionPasswordNeededError:
             waiting_for[uid] = 'get_pass'
             await event.reply("🔐 الحساب محمي، أرسل رمز التحقق بخطوتين:")
@@ -512,6 +699,8 @@ async def inputs(event):
             await event.reply("🎉 تم التحقق والحفظ بنجاح!")
             waiting_for[uid] = None
             login_temp.pop(uid, None)
+            # شغل الرد التلقائي تلقائي
+            asyncio.create_task(start_user_client())
         except Exception as e:
             await event.reply(f"❌ كلمة السر غلط: {e}")
 
@@ -521,6 +710,11 @@ async def inputs(event):
 async def main():
     await bot.start(bot_token=BOT_TOKEN)
     print("🚀 البوت شغال تمام - Programmer Azef!")
+
+    # شغل الرد التلقائي لو كان مفعل
+    if db.get('auto_reply_enabled', True) and db.get('session'):
+        asyncio.create_task(start_user_client())
+
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':

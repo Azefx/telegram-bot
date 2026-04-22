@@ -13,7 +13,7 @@ API_ID = 33595004
 API_HASH = 'cbd1066ed026997f2f4a7c4323b7bda7'
 BOT_TOKEN = '5759866264:AAEwiaoo-lT-SI6TQhHMTC59umgnkV5zIm4'
 ADMIN_ID = 154919127 # المطور الرئيسي
-DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك من غير @
+DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
 MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي ""
 DB_FILE = 'hero_data.json'
 
@@ -37,7 +37,7 @@ def load_db():
         'sleep_time': 30,
         'msg_text': '',
         'subs': {str(ADMIN_ID): '2099-01-01'},
-        'admins': [ADMIN_ID] # قائمة الأدمنز
+        'admins': [ADMIN_ID]
     }
 
 def save_db():
@@ -135,7 +135,7 @@ def admin_panel(uid):
         [Button.inline("➕ تفعيل مشترك", b"add_sub")],
         [Button.inline("👥 قائمة المشتركين", b"list_subs")],
     ]
-    if is_main_admin(uid): # بس المطور الرئيسي يقدر يرفع أدمن
+    if is_main_admin(uid):
         btns.append([Button.inline("⬆️ رفع أدمن", b"add_admin"), Button.inline("⬇️ تنزيل أدمن", b"remove_admin")])
         btns.append([Button.inline("👑 قائمة الأدمنز", b"list_admins")])
     btns.append([Button.inline("🔙 رجوع", b"back_main")])
@@ -162,6 +162,24 @@ async def start(event):
 async def admin_cmd(event):
     if is_admin(event.sender_id):
         await event.reply("👑 **لوحة التحكم:**", buttons=admin_panel(event.sender_id))
+
+# --- معالجة الدفع بالنجوم ---
+@bot.on(events.NewMessage(func=lambda e: e.message.successful_payment))
+async def payment_handler(event):
+    payment = event.message.successful_payment
+    payload = payment.invoice_payload
+    user_id = event.sender_id
+
+    if payload.startswith('vip_'):
+        parts = payload.split('_')
+        package = parts[1] + '_' + parts[2]
+        if package in STAR_PACKAGES:
+            days = STAR_PACKAGES[package]['days']
+            expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
+            db['subs'][str(user_id)] = expiry
+            save_db()
+            await bot.send_message(user_id, f"✅ **تم تفعيل اشتراكك بنجاح!**\n\n🎁 الباقة: {STAR_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}\n\nدوس /start عشان تبدأ", buttons=main_menu(user_id))
+            await bot.send_message(ADMIN_ID, f"💫 **دفع جديد بالنجوم**\n👤 المستخدم: `{user_id}`\n📦 الباقة: {STAR_PACKAGES[package]['label']}\n⭐ المبلغ: {payment.total_amount} نجمة")
 
 # --- محرك النشر الذكي ---
 async def auto_publisher(event):
@@ -388,24 +406,6 @@ async def inputs(event):
 
     if is_sub(uid) and event.text:
         await send_log(event, "إرسال نص", event.text)
-
-# --- معالجة الدفع بالنجوم ---
-@bot.on(events.RawUpdate)
-async def payment_handler(update):
-    if hasattr(update, 'message') and hasattr(update.message, 'successful_payment'):
-        payment = update.message.successful_payment
-        payload = payment.invoice_payload
-        user_id = update.message.peer_id.user_id
-
-        if payload.startswith('vip_'):
-            parts = payload.split('_')
-            package = parts[1] + '_' + parts[2]
-            if package in STAR_PACKAGES:
-                days = STAR_PACKAGES[package]['days']
-                expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
-                db['subs'][str(user_id)] = expiry
-                save_db()
-                await bot.send_message(user_id, f"✅ **تم تفعيل اشتراكك بنجاح!**\n\n🎁 الباقة: {STAR_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}\n\nدوس /start عشان تبدأ")
 
 async def main():
     await bot.start(bot_token=BOT_TOKEN)

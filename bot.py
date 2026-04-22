@@ -611,4 +611,284 @@ async def handler(event):
             return await event.answer("للمطور فقط!", alert=True)
 
         user_id = int(data.decode().split('_')[2])
-        db['pending_payments'].pop
+        db['pending_payments'].pop(str(user_id), None)
+        save_db()
+        await event.edit(f"❌ **تم رفض الطلب**\n\n👤 المستخدم: `{user_id}`")
+        await bot.send_message(user_id, "❌ **تم رفض طلب الدفع**\n\nممكن الإثبات مش واضح أو المبلغ غلط.\nراسل المطور للتوضيح:", buttons=[[Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+        return
+
+    if data == b"pending_payments":
+        if not is_main_admin(uid):
+            return
+        pending = db.get('pending_payments', {})
+        if not pending:
+            return await event.answer("لا يوجد طلبات معلقة", alert=True)
+
+        msg = "⏳ **المدفوعات المعلقة:**\n\n"
+        btns = []
+        for user_id, info in pending.items():
+            msg += f"👤 `{user_id}` - {info['package']} - {info['method']}\n"
+            btns.append([Button.inline(f"✅ تفعيل {user_id}", f"approve_payment_{user_id}_{info['package_key']}")])
+            btns.append([Button.inline(f"❌ رفض {user_id}", f"reject_payment_{user_id}")])
+
+        btns.append([Button.inline("🔙 رجوع", b"admin_panel")])
+        await event.edit(msg, buttons=btns)
+        return
+
+    if not is_sub(uid):
+        return await event.answer("انتهى اشتراكك!", alert=True)
+
+    await send_log(event, "ضغط زر", data.decode())
+
+    if data == b"settings":
+        await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
+    elif data == b"back_main":
+        await event.edit("🏠 الرئيسية:", buttons=main_menu(uid))
+    elif data == b"admin_panel":
+        await event.edit("🔐 **لوحة التحكم:**", buttons=admin_panel(uid))
+    elif data == b"fetch_groups":
+        await event.answer("⏳ جاري جلب المجموعات...", alert=True)
+        groups, msg = await get_all_groups_from_account()
+        if groups:
+            db['super_groups'] = groups
+            save_db()
+        await event.edit(f"{msg}\n\nارجع للإعدادات عشان تشوف العدد", buttons=settings_menu())
+    elif data == b"start_post":
+        if is_posting:
+            return await event.answer("🚀 يعمل بالفعل!", alert=True)
+        asyncio.create_task(auto_publisher(event))
+    elif data == b"stop_post":
+        is_posting = False
+        await event.answer("🛑 توقف النشر.", alert=True)
+    elif data == b"add_sub" and is_admin(uid):
+        waiting_for[uid] = 'get_id'
+        await event.reply("👤 ارسل ايدي المستخدم:")
+    elif data == b"add_admin" and is_main_admin(uid):
+        waiting_for[uid] = 'get_admin_id'
+        await event.reply("⬆️ ارسل ايدي الأدمن الجديد:")
+    elif data == b"remove_admin" and is_main_admin(uid):
+        waiting_for[uid] = 'remove_admin_id'
+        await event.reply("⬇️ ارسل ايدي الأدمن اللي عايز تنزله:")
+    elif data == b"list_admins" and is_main_admin(uid):
+        admins_list = "\n".join([f"- `{admin}`" for admin in db['admins']])
+        await event.reply(f"👑 **قائمة الأدمنز:**\n\n{admins_list}")
+    elif data == b"list_subs" and is_admin(uid):
+        msg = "👥 المشتركين:\n" + "\n".join([f"- `{k}` ({v})" for k,v in db['subs'].items()])
+        await event.reply(msg)
+    elif data.startswith(b"add_msg_"):
+        msg_index = int(data.decode().split('_')[-1])
+        waiting_for[uid] = f'add_msg_{msg_index}'
+        current_msg = db['msg_texts'][msg_index] if db['msg_texts'][msg_index] else "فارغة"
+        await event.reply(f"📩 **الرسالة {msg_index + 1} الحالية:**\n{current_msg}\n\n**أرسل النص الجديد:**\n\n**التنسيق المدعوم:**\n`**نص**` = عريض\n`__نص__` = مائل\n`> نص` = اقتباس\n`` `نص` `` = كود\n`{{premium:123456789}}` = إيموجي بريميوم\n\nمثال:\n`**عنوان مهم**`\n> __ملاحظة__: {{premium:5368324170671202286}}")
+    elif data in [b"add_links", b"set_time", b"set_msg_delay", b"login_phone", b"show_links"]:
+        if data == b"show_links":
+            res = "\n".join(db['super_groups']) if db['super_groups'] else "لا يوجد."
+            return await event.reply(f"👥 السوبرات المضافة حالياً: {len(db['super_groups'])}\n\n{res}")
+
+        waiting_for[uid] = data.decode()
+
+        if data == b"login_phone":
+            await event.reply("🔄 أرسل رقم الهاتف المراد ربطه (مع رمز الدولة):")
+        elif data == b"add_links":
+            await event.reply("🔗 **أرسل روابط السوبرات الآن**\n(كل رابط في سطر واحد، أو معرف المجموعة)")
+        elif data == b"set_time":
+            await event.reply("⏱️ **أدخل مدة الانتظار بين الجروبات بالثواني**")
+        elif data == b"set_msg_delay":
+            await event.reply("⏱️ **أدخل مدة الانتظار بين الرسائل بالثواني**")
+
+@bot.on(events.NewMessage)
+async def inputs(event):
+    uid = event.sender_id
+    if not event.text or event.text.startswith('/'):
+        if event.photo or event.document:
+            step = waiting_for.get(uid)
+            if step and step.startswith('payment_proof_'):
+                parts = step.split('_')
+                package = parts[2] + '_' + parts[3]
+                method = parts[4]
+
+                db['pending_payments'][str(uid)] = {
+                    'package': PRICE_PACKAGES[package]['label'],
+                    'package_key': package,
+                    'method': method,
+                    'time': datetime.now().strftime('%Y-%m-%d %H:%M')
+                }
+                save_db()
+
+                method_names = {'vodafone': 'فودافون كاش', 'ltc': 'LTC', 'ton': 'TON', 'usdt': 'USDT'}
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"💰 **طلب دفع جديد**\n\n👤 المستخدم: `{uid}`\n📦 الباقة: {PRICE_PACKAGES[package]['label']}\n💳 الطريقة: {method_names[method]}\n💰 المبلغ: {PRICE_PACKAGES[package]['price']}\n\n👇 الإثبات تحت:",
+                    buttons=[
+                        [Button.inline('✅ تفعيل', f'approve_payment_{uid}_{package}')],
+                        [Button.inline('❌ رفض', f'reject_payment_{uid}')]
+                    ]
+                )
+                await bot.forward_messages(ADMIN_ID, event.message)
+
+                await event.reply("✅ **تم إرسال الإثبات للمطور**\n\nهيتم المراجعة والتفعيل خلال دقائق ⏳")
+                waiting_for.pop(uid, None)
+        return
+
+    step = waiting_for.pop(uid, None)
+    if not step:
+        return
+
+    text = event.text.strip()
+
+    if step == 'login_phone':
+        login_temp[uid] = {'phone': text}
+        client = TelegramClient(StringSession(), API_ID, API_HASH)
+        await client.connect()
+        try:
+            await client.send_code_request(text)
+            login_temp[uid]['client'] = client
+            waiting_for[uid] = 'login_code'
+            await event.reply('📩 أرسل الكود (مع فواصل مثل 1-2-3-4-5):')
+        except Exception as e:
+            await event.reply(f'❌ خطأ: {e}')
+            await client.disconnect()
+            login_temp.pop(uid, None)
+
+    elif step == 'login_code':
+        code = text.replace('-', '')
+        temp = login_temp.get(uid)
+        if not temp:
+            return await event.reply('❌ ابدأ من جديد.')
+        client = temp['client']
+        try:
+            await client.sign_in(temp['phone'], code)
+            db['session'] = client.session.save()
+            save_db()
+            await event.reply('✅ تم ربط الحساب بنجاح!')
+            asyncio.create_task(start_user_client())
+        except SessionPasswordNeededError:
+            waiting_for[uid] = 'login_pass'
+            login_temp[uid] = client
+            await event.reply('🔒 أرسل كلمة مرور التحقق بخطوتين:')
+        except Exception as e:
+            await event.reply(f'❌ خطأ: {e}')
+            await client.disconnect()
+            login_temp.pop(uid, None)
+
+    elif step == 'login_pass':
+        client = login_temp.get(uid)
+        if not client:
+            return await event.reply('❌ ابدأ من جديد.')
+        try:
+            await client.sign_in(password=text)
+            db['session'] = client.session.save()
+            save_db()
+            await event.reply('✅ تم ربط الحساب بنجاح!')
+            asyncio.create_task(start_user_client())
+        except Exception as e:
+            await event.reply(f'❌ خطأ: {e}')
+        finally:
+            await client.disconnect()
+            login_temp.pop(uid, None)
+
+    elif step == 'add_links':
+        links = [l.strip() for l in text.split('\n') if l.strip()]
+        db['super_groups'].extend(links)
+        save_db()
+        await event.reply(f'✅ تم إضافة {len(links)} سوبر')
+
+    elif step == 'set_time':
+        try:
+            db['sleep_time'] = int(text)
+            save_db()
+            await event.reply(f'✅ تم التحديث إلى {text} ثانية')
+        except:
+            await event.reply('❌ رقم غير صحيح')
+
+    elif step == 'set_msg_delay':
+        try:
+            db['msg_delay'] = int(text)
+            save_db()
+            await event.reply(f'✅ تم التحديث إلى {text} ثانية')
+        except:
+            await event.reply('❌ رقم غير صحيح')
+
+    elif step.startswith('add_msg_'):
+        msg_index = int(step.split('_')[-1])
+        db['msg_texts'][msg_index] = text
+        save_db()
+        await event.reply(f'✅ تم حفظ الرسالة {msg_index + 1}')
+
+    elif step == 'get_id' and is_admin(uid):
+        try:
+            target = int(text)
+            expiry = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+            db['subs'][str(target)] = expiry
+            save_db()
+            await event.reply(f'✅ تم تفعيل {target} لمدة شهر')
+        except:
+            await event.reply('❌ خطأ في الايدي')
+
+    elif step == 'get_admin_id' and is_main_admin(uid):
+        try:
+            target = int(text)
+            if target not in db['admins']:
+                db['admins'].append(target)
+                save_db()
+            await event.reply(f'✅ تم رفع {target} أدمن')
+        except:
+            await event.reply('❌ خطأ في الايدي')
+
+    elif step == 'remove_admin_id' and is_main_admin(uid):
+        try:
+            target = int(text)
+            if target == ADMIN_ID:
+                return await event.reply('❌ مينفعش تنزل المطور الرئيسي')
+            if target in db['admins']:
+                db['admins'].remove(target)
+                save_db()
+            await event.reply(f'✅ تم تنزيل {target}')
+        except:
+            await event.reply('❌ خطأ في الايدي')
+
+    elif step == 'edit_reply_text' and is_main_admin(uid):
+        db['auto_reply_text'] = text
+        save_db()
+        await event.reply('✅ تم تحديث نص الرد التلقائي')
+
+    elif step == 'edit_welcome_text' and is_main_admin(uid):
+        db['welcome_text'] = text
+        save_db()
+        await event.reply('✅ تم تحديث نص الترحيب')
+
+    elif step.startswith('payment_proof_'):
+        parts = step.split('_')
+        package = parts[2] + '_' + parts[3]
+        method = parts[4]
+
+        db['pending_payments'][str(uid)] = {
+            'package': PRICE_PACKAGES[package]['label'],
+            'package_key': package,
+            'method': method,
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M')
+        }
+        save_db()
+
+        method_names = {'vodafone': 'فودافون كاش', 'ltc': 'LTC', 'ton': 'TON', 'usdt': 'USDT'}
+        await bot.send_message(
+            ADMIN_ID,
+            f"💰 **طلب دفع جديد**\n\n👤 المستخدم: `{uid}`\n📦 الباقة: {PRICE_PACKAGES[package]['label']}\n💳 الطريقة: {method_names[method]}\n💰 المبلغ: {PRICE_PACKAGES[package]['price']}\n\n📝 الإثبات:\n{text}",
+            buttons=[
+                [Button.inline('✅ تفعيل', f'approve_payment_{uid}_{package}')],
+                [Button.inline('❌ رفض', f'reject_payment_{uid}')]
+            ]
+        )
+
+        await event.reply("✅ **تم إرسال الإثبات للمطور**\n\nهيتم المراجعة والتفعيل خلال دقائق ⏳")
+
+# --- بدء التشغيل ---
+async def main():
+    await bot.start(bot_token=BOT_TOKEN)
+    print("🚀 البوت اشتغل!")
+    if db['session'] and db.get('auto_reply_enabled', True):
+        asyncio.create_task(start_user_client())
+    await bot.run_until_disconnected()
+
+if __name__ == '__main__':
+    asyncio.run(main())

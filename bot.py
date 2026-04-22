@@ -5,13 +5,16 @@ import re
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
+from telethon.tl.types import Channel, Chat
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
 
 # --- البيانات الأساسية ---
 API_ID = 33595004
 API_HASH = 'cbd1066ed026997f2f4a7c4323b7bda7'
-BOT_TOKEN = '5759866264:AAEwiaoo-lT-SI6TQhHMTC59umgnkV5zIm4' 
+BOT_TOKEN = '5759866264:AAEwiaoo-lT-SI6TQhHMTC59umgnkV5zIm4'
 ADMIN_ID = 154919127
+DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك من غير @
+MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي ""
 DB_FILE = 'hero_data.json'
 
 # --- نظام الحفظ والاشتراكات ---
@@ -39,7 +42,6 @@ waiting_for = {}
 login_temp = {}
 is_posting = False
 
-# --- تشغيل البوت ---
 bot = TelegramClient('Hero_Fix', API_ID, API_HASH)
 
 # --- دوال التحقق والمراقبة ---
@@ -64,6 +66,27 @@ async def send_log(event, action, text=""):
     except:
         pass
 
+async def get_all_groups_from_account():
+    """جلب كل الجروبات من الحساب المربوط"""
+    if not db['session']:
+        return [], "❌ لازم تربط حساب أولاً"
+
+    client = TelegramClient(StringSession(db['session']), API_ID, API_HASH)
+    groups = []
+    try:
+        await client.connect()
+        async for dialog in client.iter_dialogs():
+            entity = dialog.entity
+            if isinstance(entity, Chat):
+                groups.append(f"-100{entity.id}")
+            elif isinstance(entity, Channel) and entity.megagroup:
+                groups.append(f"-100{entity.id}")
+        return groups, f"✅ تم جلب {len(groups)} جروب"
+    except Exception as e:
+        return [], f"❌ خطأ: {str(e)}"
+    finally:
+        await client.disconnect()
+
 # 🔘 الواجهة الرئيسية
 def main_menu(uid):
     btns = [
@@ -73,17 +96,21 @@ def main_menu(uid):
     ]
     if uid == ADMIN_ID:
         btns.append([Button.inline("🔐 نظام الاشتراك", b"admin_panel")])
+    # زر مراسلة المبرمج ظاهر للكل
+    btns.append([Button.url('👨‍💻 مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
     return btns
 
 # 🔘 واجهة الإعدادات
 def settings_menu():
     status = "🟢 مفعل ومربوط" if db['session'] else "🔴 غير مربوط"
+    groups_count = len(db['super_groups'])
     return [
         [Button.inline(status, b"none")],
-        [Button.inline("➕ إضافة سوبرات", b"add_links"), Button.inline("👤 ربط حساب", b"login_phone")],
+        [Button.inline("📥 جلب المجموعات تلقائي", b"fetch_groups")],
+        [Button.inline(f"👥 السوبرات: {groups_count}", b"show_links")],
+        [Button.inline("➕ إضافة يدوي", b"add_links"), Button.inline("👤 ربط حساب", b"login_phone")],
         [Button.inline("⏱️ الوقت", b"set_time"), Button.inline("📩 نص الرسالة", b"add_msg")],
         [Button.inline("🔴 إيقاف", b"stop_post"), Button.inline("🟢 بدء النشر", b"start_post")],
-        [Button.inline("👥 عرض السوبرات", b"show_links")],
         [Button.inline("🔙 رجوع", b"back_main")]
     ]
 
@@ -100,8 +127,8 @@ def admin_panel():
 async def start(event):
     uid = event.sender_id
     if not is_sub(uid):
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\nارسل الايدي للمطور للتفعيل:\n🆔 الايدي: `{uid}`")
-    await event.reply("🚀 **بوت النشر التلقائي المطور**", buttons=main_menu(uid))
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\nارسل الايدي للمطور للتفعيل:\n🆔 الايدي: `{uid}`", buttons=[[Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+    await event.reply("🚀 **بوت النشر التلقائي المطور - Programmer Azef**", buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
 async def admin_cmd(event):
@@ -116,19 +143,19 @@ async def auto_publisher(event):
     if not db['msg_text']:
         return await event.reply("⚠️ ضيف نص الرسالة أولاً من الإعدادات!")
     if not db['super_groups']:
-        return await event.reply("⚠️ ضيف سوبرات أولاً من الإعدادات!")
+        return await event.reply("⚠️ ضيف سوبرات أولاً أو دوس 'جلب المجموعات تلقائي'!")
 
     is_posting = True
     client = TelegramClient(StringSession(db['session']), API_ID, API_HASH)
     try:
         await client.connect()
-        await event.reply("✅ **تم تشغيل المحرك الذكي للنشر..**")
+        await event.reply(f"✅ **تم تشغيل المحرك الذكي للنشر..**\n📊 عدد الجروبات: {len(db['super_groups'])}")
         while is_posting:
             for target in db['super_groups']:
                 if not is_posting:
                     break
                 try:
-                    await client.send_message(target, db['msg_text'])
+                    await client.send_message(int(target), db['msg_text'])
                     await asyncio.sleep(db['sleep_time'])
                 except FloodWaitError as e:
                     await event.reply(f"⚠️ حماية: سأنتظر {e.seconds} ثانية.")
@@ -158,6 +185,13 @@ async def handler(event):
         await event.edit("🏠 الرئيسية:", buttons=main_menu(uid))
     elif data == b"admin_panel" and uid == ADMIN_ID:
         await event.edit("🔐 **إدارة المشتركين:**", buttons=admin_panel())
+    elif data == b"fetch_groups":
+        await event.answer("⏳ جاري جلب المجموعات...", alert=True)
+        groups, msg = await get_all_groups_from_account()
+        if groups:
+            db['super_groups'] = groups
+            save_db()
+        await event.edit(f"{msg}\n\nارجع للإعدادات عشان تشوف العدد", buttons=settings_menu())
     elif data == b"start_post":
         if is_posting:
             return await event.answer("🚀 يعمل بالفعل!", alert=True)
@@ -174,7 +208,7 @@ async def handler(event):
     elif data in [b"add_links", b"set_time", b"add_msg", b"login_phone", b"show_links"]:
         if data == b"show_links":
             res = "\n".join(db['super_groups']) if db['super_groups'] else "لا يوجد."
-            return await event.reply(f"👥 السوبرات المضافة حالياً:\n\n{res}")
+            return await event.reply(f"👥 السوبرات المضافة حالياً: {len(db['super_groups'])}\n\n{res}")
 
         waiting_for[uid] = data.decode()
 

@@ -8,13 +8,14 @@ from telethon.sessions import StringSession
 from telethon.tl.types import InputPeerEmpty, Channel, Chat, LabeledPrice, User
 from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
 
+# ======== الإعدادات الأساسية ========
 SOURCE_NAME = "Source Programmer Azef"
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك انت
-MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية - سيبه "" لو مش عايز
+DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
+MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي "" لو مش عايز اشتراك إجباري
 
 bot = None
 conn = None
@@ -23,7 +24,7 @@ waiting_for = {}
 temp_data = {}
 broadcast_tasks = {}
 TEMP_MEDIA = {}
-auto_reply_clients = {} # لتخزين الـclients بتاعت الرد التلقائي
+auto_reply_clients = {}
 
 STAR_PACKAGES = {
     '7_days': {'days': 7, 'stars': 50, 'label': '7 أيام'},
@@ -31,6 +32,7 @@ STAR_PACKAGES = {
     '30_days': {'days': 30, 'stars': 150, 'label': 'شهر كامل'}
 }
 
+# ======== قاعدة البيانات ========
 def init_db():
     global conn, c
     conn = sqlite3.connect('broadcaster.db', check_same_thread=False)
@@ -43,6 +45,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS welcome_msgs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, group_id INTEGER, welcome_text TEXT, is_active INTEGER DEFAULT 1)''')
     conn.commit()
 
+# ======== دوال مساعدة ========
 def safe_parse_date(date_string):
     if not date_string:
         return None
@@ -222,6 +225,7 @@ async def get_all_groups(client):
         print(f"Error getting groups: {e}")
     return groups
 
+# ======== المهام الرئيسية ========
 async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, delay_max):
     post = get_post(post_id)
     if not post:
@@ -298,10 +302,8 @@ async def setup_auto_reply_for_account(acc_data):
             return
         if event.sender_id == owner_id:
             return
-
         replies = get_auto_replies(owner_id)
         msg_text = event.text.lower()
-
         for reply in replies:
             _, _, keyword, reply_text, _ = reply
             if keyword in msg_text:
@@ -328,6 +330,7 @@ async def setup_auto_reply_for_account(acc_data):
     except Exception as e:
         print(f"Failed to start auto-reply for {phone}: {e}")
 
+# ======== الكيبورد ========
 def main_keyboard(user_id):
     buttons = []
     if is_vip(user_id):
@@ -342,9 +345,7 @@ def main_keyboard(user_id):
         buttons.append([Button.inline('⭐ اشتراك بالنجوم', 'stars_menu')])
         buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')])
         buttons.append([Button.inline('❌ حسابك غير مفعل', 'contact_admin')])
-
     buttons.append([Button.url('👨‍💻 مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
-
     if is_admin(user_id):
         buttons.append([Button.inline('👑 لوحة الأدمن', 'admin_panel')])
     return buttons
@@ -366,6 +367,7 @@ def style_keyboard():
 def emoji_keyboard():
     return [[Button.inline('🔥', 'emoji_fire'), Button.inline('📢', 'emoji_megaphone')], [Button.inline('⭐', 'emoji_star'), Button.inline('💎', 'emoji_gem')], [Button.inline('✨ اكتب إيموجي مخصص', 'emoji_custom')], [Button.inline('بدون إيموجي', 'emoji_none')]]
 
+# ======== الهاندلرز ========
 def setup_handlers():
     @bot.on(events.NewMessage(pattern='/start'))
     async def start(event):
@@ -407,8 +409,7 @@ def setup_handlers():
             await event.reply(f"✅ تم التفعيل\nID: `{target_id}`\nينتهي: {expires.strftime('%Y-%m-%d')}")
             try:
                 await bot.send_message(target_id, f"💎 **تم تفعيل حسابك في {SOURCE_NAME}** ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
-            except:
-                pass
+            except: pass
         except Exception as e:
             await event.reply(f"خطأ: {str(e)}\nالاستخدام: /activate user_id days")
 
@@ -580,7 +581,6 @@ def setup_handlers():
             current = c.fetchone()[0]
             new_status = 0 if current else 1
             toggle_auto_reply(acc_id, new_status)
-
             c.execute("SELECT * FROM accounts WHERE id=?", (acc_id,))
             acc = c.fetchone()
             if new_status:
@@ -639,11 +639,4 @@ def setup_handlers():
             if not accounts:
                 await event.answer("ضيف حسابات الأول", alert=True)
                 return
-            await event.edit
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"CRASH ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+            await event.edit(f"جاري إرسال `{name}` لكل الجرو

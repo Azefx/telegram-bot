@@ -83,6 +83,8 @@ def load_db():
                     data['msg_delay'] = 5
                 if 'send_all_mode' not in data:
                     data['send_all_mode'] = False
+                if 'trial_users' not in data:
+                    data['trial_users'] = []
                 return data
         except:
             pass
@@ -90,11 +92,11 @@ def load_db():
         'session': None,
         'super_groups': [],
         'sleep_time': 30,
-        'msg_delay': 5, # الوقت بين كل رسالة والتانية
-        'msg_texts': ['', '', '', ''], # 4 رسائل
+        'msg_delay': 5,
+        'msg_texts': ['', '', ''],
         'current_msg_index': 0,
         'msg_stats': [0, 0, 0, 0],
-        'send_all_mode': False, # False = تدوير, True = الكل
+        'send_all_mode': False,
         'subs': {str(ADMIN_ID): '2099-01-01'},
         'admins': [ADMIN_ID],
         'pending_payments': {},
@@ -106,7 +108,8 @@ def load_db():
         'welcome_enabled': True,
         'welcome_text': 'أهلاً بيك في بوت Programmer Azef 🌟\n\nأنا بوت النشر التلقائي المطور\nللاشتراك دوس الزر تحت 👇',
         'welcomed_users': [],
-        'use_formatting': True
+        'use_formatting': True,
+        'trial_users': []
     }
 
 def save_db():
@@ -134,7 +137,12 @@ def is_sub(uid):
     uid = str(uid)
     if uid in db.get('subs', {}):
         try:
-            expiry = datetime.strptime(db['subs'][uid], '%Y-%m-%d')
+            # تحقق من التاريخ والوقت
+            expiry_str = db['subs'][uid]
+            if ' ' in expiry_str: # لو فيه وقت
+                expiry = datetime.strptime(expiry_str, '%Y-%m-%d %H:%M:%S')
+            else:
+                expiry = datetime.strptime(expiry_str, '%Y-%m-%d')
             if expiry > datetime.now():
                 return True
         except:
@@ -152,7 +160,6 @@ def get_current_time():
         return ""
 
 def parse_premium_emojis(text):
-    """يحول {premium:123456} لـ إيموجي بريميوم"""
     entities = []
     new_text = text
     offset_diff = 0
@@ -213,6 +220,9 @@ def main_menu(uid):
         [Button.inline("🚀 بدء النشر", b"start_post")]
     ]
     if not is_sub(uid):
+        # لو مش واخد تجربة قبل كده
+        if str(uid) not in db.get('trial_users', []):
+            btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
         btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
     if is_admin(uid):
         btns.append([Button.inline("🔐 لوحة الأدمن", b"admin_panel")])
@@ -359,7 +369,12 @@ async def start(event):
             return
 
     if not is_sub(uid):
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=[[Button.inline("💳 اشترك الآن", b"payment_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+        btns = []
+        if str(uid) not in db.get('trial_users', []):
+            btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
+        btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
+        btns.append([Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
     await event.reply(bot_name, buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
@@ -392,7 +407,6 @@ async def auto_publisher(event):
                     break
                 try:
                     if db.get('send_all_mode', False):
-                        # وضع الكل: ابعت كل الرسائل لنفس الجروب
                         for actual_idx, msg_text in available_msgs:
                             if not is_posting:
                                 break
@@ -415,11 +429,9 @@ async def auto_publisher(event):
                             db['msg_stats'][actual_idx] += 1
                             save_db()
 
-                            # وقت فاصل بين الرسائل
                             if actual_idx!= available_msgs[-1][0]:
                                 await asyncio.sleep(db.get('msg_delay', 5))
                     else:
-                        # وضع التدوير: رسالة واحدة لكل جروب
                         msg_idx = db['current_msg_index'] % len(available_msgs)
                         actual_idx, msg_text = available_msgs[msg_idx]
 
@@ -460,6 +472,20 @@ async def auto_publisher(event):
 async def handler(event):
     global is_posting
     data, uid = event.data, event.sender_id
+
+    if data == b"free_trial":
+        if str(uid) in db.get('trial_users', []):
+            return await event.answer("❌ انت استخدمت التجربة المجانية قبل كده!", alert=True)
+
+        # تفعيل ساعة واحدة
+        expiry = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+        db['subs'][str(uid)] = expiry
+        db['trial_users'].append(str(uid))
+        save_db()
+
+        await event.edit(f"🎁 **تم تفعيل التجربة المجانية!**\n\n⏰ صالحة لمدة: 1 ساعة\n📅 تنتهي: {expiry}\n\nدوس /start عشان تبدأ", buttons=main_menu(uid))
+        await send_log(event, "تجربة مجانية", "تم تفعيل تجربة ساعة")
+        return
 
     if data == b"toggle_logs":
         if not is_main_admin(uid):
@@ -690,10 +716,4 @@ async def handler(event):
     elif data == b"add_admin" and is_main_admin(uid):
         waiting_for[uid] = 'get_admin_id'
         await event.reply("⬆️ ارسل ايدي الأدمن الجديد:")
-    elif data == b"remove_admin" and is_main_admin(uid):
-        waiting_for[uid] = 'remove_admin_id'
-        await event.reply("⬇️ ارسل ايدي الأدمن اللي عايز تنزله:")
-    elif data == b"list_admins" and is_main_admin(uid):
-        admins_list = "\n".join([f"- `{admin}`" for admin in db['admins']])
-        await event.reply(f"👑 **قائمة الادمن:**\n\n{admins_list}")
-    elif data == b"list_subs" and is_admin(uid):
+    elif data == b"remove_admin" and is

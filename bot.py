@@ -5,17 +5,23 @@ import re
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.tl.types import Channel, Chat
+from telethon.tl.types import Channel, Chat, LabeledPrice
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
 
 # --- البيانات الأساسية ---
 API_ID = 33595004
 API_HASH = 'cbd1066ed026997f2f4a7c4323b7bda7'
 BOT_TOKEN = '5759866264:AAEwiaoo-lT-SI6TQhHMTC59umgnkV5zIm4'
-ADMIN_ID = 154919127
+ADMIN_ID = 154919127 # المطور الرئيسي
 DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك من غير @
 MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي ""
 DB_FILE = 'hero_data.json'
+
+STAR_PACKAGES = {
+    '7_days': {'days': 7, 'stars': 50, 'label': '7 أيام'},
+    '15_days': {'days': 15, 'stars': 100, 'label': '15 يوم'},
+    '30_days': {'days': 30, 'stars': 150, 'label': 'شهر كامل'}
+}
 
 # --- نظام الحفظ والاشتراكات ---
 def load_db():
@@ -30,7 +36,8 @@ def load_db():
         'super_groups': [],
         'sleep_time': 30,
         'msg_text': '',
-        'subs': {str(ADMIN_ID): '2099-01-01'}
+        'subs': {str(ADMIN_ID): '2099-01-01'},
+        'admins': [ADMIN_ID] # قائمة الأدمنز
     }
 
 def save_db():
@@ -45,7 +52,15 @@ is_posting = False
 bot = TelegramClient('Hero_Fix', API_ID, API_HASH)
 
 # --- دوال التحقق والمراقبة ---
+def is_admin(uid):
+    return uid in db.get('admins', [ADMIN_ID])
+
+def is_main_admin(uid):
+    return uid == ADMIN_ID
+
 def is_sub(uid):
+    if is_admin(uid):
+        return True
     uid = str(uid)
     if uid in db.get('subs', {}):
         try:
@@ -61,13 +76,12 @@ async def send_log(event, action, text=""):
         user = await event.get_sender()
         name = user.first_name if user else "Unknown"
         uid = user.id if user else "Unknown"
-        log_msg = f"🔔 **إشعار دخول جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}"
+        log_msg = f"🔔 **إشعار مراقبة جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}"
         await bot.send_message(ADMIN_ID, log_msg)
     except:
         pass
 
 async def get_all_groups_from_account():
-    """جلب كل الجروبات من الحساب المربوط"""
     if not db['session']:
         return [], "❌ لازم تربط حساب أولاً"
 
@@ -94,10 +108,11 @@ def main_menu(uid):
         [Button.inline("⚙️ إعدادات النشر", b"settings")],
         [Button.inline("🚀 بدء النشر", b"start_post")]
     ]
-    if uid == ADMIN_ID:
-        btns.append([Button.inline("🔐 نظام الاشتراك المدفوع", b"admin_panel")])
-    # زر مراسلة المبرمج ظاهر للكل
-    btns.append([Button.url('👨‍💻 اضغط لمراسله المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+    if not is_sub(uid):
+        btns.append([Button.inline("💫 اشترك بالنجوم", b"stars_menu")])
+    if is_admin(uid):
+        btns.append([Button.inline("🔐 لوحة الأدمن", b"admin_panel")])
+    btns.append([Button.url('👨‍💻 مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
     return btns
 
 # 🔘 واجهة الإعدادات
@@ -114,12 +129,25 @@ def settings_menu():
         [Button.inline("🔙 رجوع", b"back_main")]
     ]
 
-# 🔘 لوحة المطور
-def admin_panel():
-    return [
+# 🔘 لوحة الأدمن
+def admin_panel(uid):
+    btns = [
         [Button.inline("➕ تفعيل مشترك", b"add_sub")],
         [Button.inline("👥 قائمة المشتركين", b"list_subs")],
-        [Button.inline("🔙 رجوع", b"back_main")]
+    ]
+    if is_main_admin(uid): # بس المطور الرئيسي يقدر يرفع أدمن
+        btns.append([Button.inline("⬆️ رفع أدمن", b"add_admin"), Button.inline("⬇️ تنزيل أدمن", b"remove_admin")])
+        btns.append([Button.inline("👑 قائمة الأدمنز", b"list_admins")])
+    btns.append([Button.inline("🔙 رجوع", b"back_main")])
+    return btns
+
+# 🔘 قائمة النجوم
+def stars_menu_keyboard():
+    return [
+        [Button.inline(f'7 أيام - 50⭐', 'buy_7_days')],
+        [Button.inline(f'15 يوم - 100⭐', 'buy_15_days')],
+        [Button.inline(f'شهر كامل - 150⭐', 'buy_30_days')],
+        [Button.inline('🔙 رجوع', 'back_main')]
     ]
 
 # --- استقبال الأوامر ---
@@ -127,13 +155,13 @@ def admin_panel():
 async def start(event):
     uid = event.sender_id
     if not is_sub(uid):
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\nارسل الايدي للمطور للتفعيل:\n🆔 الايدي: `{uid}`", buttons=[[Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💫 تقدر تشترك بالنجوم أو راسل المطور:\n🆔 الايدي: `{uid}`", buttons=[[Button.inline("💫 اشترك بالنجوم", b"stars_menu")], [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
     await event.reply("🚀 **بوت النشر التلقائي المطور - Programmer Azef**", buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
 async def admin_cmd(event):
-    if event.sender_id == ADMIN_ID:
-        await event.reply("👑 **لوحة التحكم بالمشتركين:**", buttons=admin_panel())
+    if is_admin(event.sender_id):
+        await event.reply("👑 **لوحة التحكم:**", buttons=admin_panel(event.sender_id))
 
 # --- محرك النشر الذكي ---
 async def auto_publisher(event):
@@ -174,6 +202,30 @@ async def auto_publisher(event):
 async def handler(event):
     global is_posting
     data, uid = event.data, event.sender_id
+
+    if data == b"stars_menu":
+        await event.edit("💫 **اشترك بالنجوم**\n\nاختر الباقة اللي تناسبك:", buttons=stars_menu_keyboard())
+        return
+
+    if data.startswith(b'buy_'):
+        package = data.decode().split('_')[1] + '_' + data.decode().split('_')[2]
+        if package not in STAR_PACKAGES:
+            return
+        pkg = STAR_PACKAGES[package]
+        await event.edit(f"💫 **تأكيد الشراء**\n\nالباقة: {pkg['label']}\nالسعر: {pkg['stars']} نجمة\n\nدوس الدفع تحت عشان تكمل", buttons=[
+            [Button.buy(f'💫 ادفع {pkg["stars"]} نجمة')],
+            [Button.inline('🔙 رجوع', 'stars_menu')]
+        ])
+        await bot.send_invoice(
+            uid,
+            title=f"Programmer Azef - {pkg['label']}",
+            description=f"اشتراك VIP لمدة {pkg['label']} في بوت Programmer Azef",
+            currency='XTR',
+            prices=[LabeledPrice(label=pkg['label'], amount=pkg['stars'])],
+            payload=f"vip_{package}_{uid}"
+        )
+        return
+
     if not is_sub(uid):
         return await event.answer("انتهى اشتراكك!", alert=True)
 
@@ -183,8 +235,8 @@ async def handler(event):
         await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
     elif data == b"back_main":
         await event.edit("🏠 الرئيسية:", buttons=main_menu(uid))
-    elif data == b"admin_panel" and uid == ADMIN_ID:
-        await event.edit("🔐 **إدارة المشتركين:**", buttons=admin_panel())
+    elif data == b"admin_panel":
+        await event.edit("🔐 **لوحة التحكم:**", buttons=admin_panel(uid))
     elif data == b"fetch_groups":
         await event.answer("⏳ جاري جلب المجموعات...", alert=True)
         groups, msg = await get_all_groups_from_account()
@@ -199,10 +251,19 @@ async def handler(event):
     elif data == b"stop_post":
         is_posting = False
         await event.answer("🛑 توقف النشر.", alert=True)
-    elif data == b"add_sub" and uid == ADMIN_ID:
+    elif data == b"add_sub" and is_admin(uid):
         waiting_for[uid] = 'get_id'
         await event.reply("👤 ارسل ايدي المستخدم:")
-    elif data == b"list_subs" and uid == ADMIN_ID:
+    elif data == b"add_admin" and is_main_admin(uid):
+        waiting_for[uid] = 'get_admin_id'
+        await event.reply("⬆️ ارسل ايدي الأدمن الجديد:")
+    elif data == b"remove_admin" and is_main_admin(uid):
+        waiting_for[uid] = 'remove_admin_id'
+        await event.reply("⬇️ ارسل ايدي الأدمن اللي عايز تنزله:")
+    elif data == b"list_admins" and is_main_admin(uid):
+        admins_list = "\n".join([f"- `{admin}`" for admin in db['admins']])
+        await event.reply(f"👑 **قائمة الأدمنز:**\n\n{admins_list}")
+    elif data == b"list_subs" and is_admin(uid):
         msg = "👥 المشتركين:\n" + "\n".join([f"- `{k}` ({v})" for k,v in db['subs'].items()])
         await event.reply(msg)
     elif data in [b"add_links", b"set_time", b"add_msg", b"login_phone", b"show_links"]:
@@ -231,6 +292,32 @@ async def inputs(event):
     if step == 'get_id':
         waiting_for[uid] = f"get_days_{event.text.strip()}"
         await event.reply("🕒 كم عدد أيام الاشتراك؟")
+    elif step == 'get_admin_id':
+        try:
+            new_admin = int(event.text.strip())
+            if new_admin not in db['admins']:
+                db['admins'].append(new_admin)
+                save_db()
+                await event.reply(f"✅ تم رفع `{new_admin}` أدمن بنجاح")
+            else:
+                await event.reply("⚠️ ده أدمن أصلاً")
+            waiting_for[uid] = None
+        except:
+            await event.reply("❌ ارسل ايدي صحيح")
+    elif step == 'remove_admin_id':
+        try:
+            admin_to_remove = int(event.text.strip())
+            if admin_to_remove == ADMIN_ID:
+                await event.reply("❌ ماتقدرش تنزل المطور الرئيسي")
+            elif admin_to_remove in db['admins']:
+                db['admins'].remove(admin_to_remove)
+                save_db()
+                await event.reply(f"✅ تم تنزيل `{admin_to_remove}` من الأدمنز")
+            else:
+                await event.reply("⚠️ ده مش أدمن أصلاً")
+            waiting_for[uid] = None
+        except:
+            await event.reply("❌ ارسل ايدي صحيح")
     elif step and step.startswith('get_days_'):
         target_id = step.split('_')[-1]
         try:
@@ -301,6 +388,24 @@ async def inputs(event):
 
     if is_sub(uid) and event.text:
         await send_log(event, "إرسال نص", event.text)
+
+# --- معالجة الدفع بالنجوم ---
+@bot.on(events.RawUpdate)
+async def payment_handler(update):
+    if hasattr(update, 'message') and hasattr(update.message, 'successful_payment'):
+        payment = update.message.successful_payment
+        payload = payment.invoice_payload
+        user_id = update.message.peer_id.user_id
+
+        if payload.startswith('vip_'):
+            parts = payload.split('_')
+            package = parts[1] + '_' + parts[2]
+            if package in STAR_PACKAGES:
+                days = STAR_PACKAGES[package]['days']
+                expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
+                db['subs'][str(user_id)] = expiry
+                save_db()
+                await bot.send_message(user_id, f"✅ **تم تفعيل اشتراكك بنجاح!**\n\n🎁 الباقة: {STAR_PACKAGES[package]['label']}\n📅 صالح لحد: {expiry}\n\nدوس /start عشان تبدأ")
 
 async def main():
     await bot.start(bot_token=BOT_TOKEN)

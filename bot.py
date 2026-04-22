@@ -33,20 +33,6 @@ PRICE_PACKAGES = {
     '30_days': {'days': 30, 'price': '150 جنيه', 'label': 'شهر كامل'}
 }
 
-COUNTRIES = {
-    'eg': {'name': '🇪🇬 مصر', 'tz': 'Africa/Cairo'},
-    'sa': {'name': '🇸🇦 السعودية', 'tz': 'Asia/Riyadh'},
-    'ae': {'name': '🇦🇪 الإمارات', 'tz': 'Asia/Dubai'},
-    'kw': {'name': '🇰🇼 الكويت', 'tz': 'Asia/Kuwait'},
-    'qa': {'name': '🇶🇦 قطر', 'tz': 'Asia/Qatar'},
-    'bh': {'name': '🇧🇭 البحرين', 'tz': 'Asia/Bahrain'},
-    'om': {'name': '🇴🇲 عمان', 'tz': 'Asia/Muscat'},
-    'jo': {'name': '🇯🇴 الأردن', 'tz': 'Asia/Amman'},
-    'lb': {'name': '🇱🇧 لبنان', 'tz': 'Asia/Beirut'},
-    'ma': {'name': '🇲🇦 المغرب', 'tz': 'Africa/Casablanca'},
-    'gmt': {'name': '🌍 توقيت جرينتش', 'tz': 'UTC'}
-}
-
 # --- نظام الحفظ والاشتراكات ---
 def load_db():
     if os.path.exists(DB_FILE):
@@ -59,8 +45,6 @@ def load_db():
                     data['pending_payments'] = {}
                 if 'show_time' not in data:
                     data['show_time'] = False
-                if 'timezone' not in data:
-                    data['timezone'] = 'Africa/Cairo'
                 if 'auto_reply_enabled' not in data:
                     data['auto_reply_enabled'] = True
                 if 'auto_reply_text' not in data:
@@ -93,7 +77,7 @@ def load_db():
         'super_groups': [],
         'sleep_time': 30,
         'msg_delay': 5,
-        'msg_texts': ['', '', ''],
+        'msg_texts': ['', '', '', ''],
         'current_msg_index': 0,
         'msg_stats': [0, 0, 0, 0],
         'send_all_mode': False,
@@ -102,7 +86,6 @@ def load_db():
         'pending_payments': {},
         'logs_enabled': True,
         'show_time': False,
-        'timezone': 'Africa/Cairo',
         'auto_reply_enabled': True,
         'auto_reply_text': f'تفضل خاص @{DEVELOPER_USERNAME}',
         'welcome_enabled': True,
@@ -137,9 +120,8 @@ def is_sub(uid):
     uid = str(uid)
     if uid in db.get('subs', {}):
         try:
-            # تحقق من التاريخ والوقت
             expiry_str = db['subs'][uid]
-            if ' ' in expiry_str: # لو فيه وقت
+            if ' ' in expiry_str:
                 expiry = datetime.strptime(expiry_str, '%Y-%m-%d %H:%M:%S')
             else:
                 expiry = datetime.strptime(expiry_str, '%Y-%m-%d')
@@ -153,7 +135,7 @@ def get_current_time():
     if not db.get('show_time', False):
         return ""
     try:
-        tz = pytz.timezone(db.get('timezone', 'Africa/Cairo'))
+        tz = pytz.timezone('Africa/Cairo')
         now = datetime.now(tz)
         return f"\n🕐 {now.strftime('%I:%M %p - %d/%m/%Y')}"
     except:
@@ -220,7 +202,6 @@ def main_menu(uid):
         [Button.inline("🚀 بدء النشر", b"start_post")]
     ]
     if not is_sub(uid):
-        # لو مش واخد تجربة قبل كده
         if str(uid) not in db.get('trial_users', []):
             btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
         btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
@@ -240,9 +221,6 @@ def settings_menu():
     format_status = "✨ التنسيق: مفعل" if db.get('use_formatting', True) else "✨ التنسيق: معطل"
     mode_status = "📤 وضع: الكل" if db.get('send_all_mode', False) else "🔄 وضع: تدوير"
 
-    current_tz = db.get('timezone', 'Africa/Cairo')
-    country_name = next((v['name'] for k, v in COUNTRIES.items() if v['tz'] == current_tz), '🌍 غير محدد')
-
     stats = db.get('msg_stats', [0, 0, 0, 0])
     msg_delay = db.get('msg_delay', 5)
 
@@ -254,7 +232,6 @@ def settings_menu():
         [Button.inline(welcome_status, b"toggle_welcome")],
         [Button.inline(format_status, b"toggle_format")],
         [Button.inline(mode_status, b"toggle_mode")],
-        [Button.inline(f"🌍 الدولة: {country_name}", b"choose_country")],
         [Button.inline("✏️ تعديل نص الرد", b"edit_reply_text"), Button.inline("✏️ تعديل الترحيب", b"edit_welcome_text")],
         [Button.inline(f"📩 الرسالة 1 ({stats[0]})", b"add_msg_0"), Button.inline(f"📩 الرسالة 2 ({stats[1]})", b"add_msg_1")],
         [Button.inline(f"📩 الرسالة 3 ({stats[2]})", b"add_msg_2"), Button.inline(f"📩 الرسالة 4 ({stats[3]})", b"add_msg_3")],
@@ -265,14 +242,6 @@ def settings_menu():
         [Button.inline("🔴 إيقاف", b"stop_post"), Button.inline("🟢 بدء النشر", b"start_post")],
         [Button.inline("🔙 رجوع", b"back_main")]
     ]
-
-# 🔘 قائمة الدول
-def countries_menu():
-    btns = []
-    for code, info in COUNTRIES.items():
-        btns.append([Button.inline(info['name'], f"set_country_{code}")])
-    btns.append([Button.inline("🔙 رجوع", b"settings")])
-    return btns
 
 # 🔘 لوحة الأدمن
 def admin_panel(uid):
@@ -351,8 +320,7 @@ async def start_user_client():
         print("✅ الرد التلقائي شغال")
     except Exception as e:
         print(f"❌ خطأ في تشغيل الرد التلقائي: {e}")
-
-# --- استقبال الأوامر ---
+        # --- استقبال الأوامر ---
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
     uid = event.sender_id
@@ -477,7 +445,6 @@ async def handler(event):
         if str(uid) in db.get('trial_users', []):
             return await event.answer("❌ انت استخدمت التجربة المجانية قبل كده!", alert=True)
 
-        # تفعيل ساعة واحدة
         expiry = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
         db['subs'][str(uid)] = expiry
         db['trial_users'].append(str(uid))
@@ -568,23 +535,6 @@ async def handler(event):
         await event.reply(f"✏️ **نص الترحيب الحالي:**\n{db.get('welcome_text')}\n\nارسل النص الجديد:")
         return
 
-    if data == b"choose_country":
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
-        await event.edit("🌍 **اختر الدولة/التوقيت:**", buttons=countries_menu())
-        return
-
-    if data.startswith(b'set_country_'):
-        if not is_main_admin(uid):
-            return await event.answer("للمطور فقط!", alert=True)
-        code = data.decode().split('_')[2]
-        if code in COUNTRIES:
-            db['timezone'] = COUNTRIES[code]['tz']
-            save_db()
-            await event.answer(f"تم اختيار {COUNTRIES[code]['name']}", alert=True)
-            await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
-        return
-
     if data == b"payment_menu":
         await event.edit("💳 **اختر الباقة المناسبة**\n\nكل الباقات تعطيك صلاحية كاملة للبوت:", buttons=payment_menu_keyboard())
         return
@@ -661,59 +611,4 @@ async def handler(event):
             return await event.answer("للمطور فقط!", alert=True)
 
         user_id = int(data.decode().split('_')[2])
-        db['pending_payments'].pop(str(user_id), None)
-        save_db()
-        await event.edit(f"❌ **تم رفض الطلب**\n\n👤 المستخدم: `{user_id}`")
-        await bot.send_message(user_id, "❌ **تم رفض طلب الدفع**\n\nممكن الإثبات مش واضح أو المبلغ غلط.\nراسل المطور للتوضيح:", buttons=[[Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]])
-        return
-
-    if data == b"pending_payments":
-        if not is_main_admin(uid):
-            return
-        pending = db.get('pending_payments', {})
-        if not pending:
-            return await event.answer("لا يوجد طلبات معلقة", alert=True)
-
-        msg = "⏳ **المدفوعات المعلقة:**\n\n"
-        btns = []
-        for user_id, info in pending.items():
-            msg += f"👤 `{user_id}` - {info['package']} - {info['method']}\n"
-            btns.append([Button.inline(f"✅ تفعيل {user_id}", f"approve_payment_{user_id}_{info['package_key']}")])
-            btns.append([Button.inline(f"❌ رفض {user_id}", f"reject_payment_{user_id}")])
-
-        btns.append([Button.inline("🔙 رجوع", b"admin_panel")])
-        await event.edit(msg, buttons=btns)
-        return
-
-    if not is_sub(uid):
-        return await event.answer("انتهى اشتراكك!", alert=True)
-
-    await send_log(event, "ضغط زر", data.decode())
-
-    if data == b"settings":
-        await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
-    elif data == b"back_main":
-        await event.edit("🏠 الرئيسية:", buttons=main_menu(uid))
-    elif data == b"admin_panel":
-        await event.edit("🔐 **لوحة التحكم:**", buttons=admin_panel(uid))
-    elif data == b"fetch_groups":
-        await event.answer("⏳ جاري جلب المجموعات...", alert=True)
-        groups, msg = await get_all_groups_from_account()
-        if groups:
-            db['super_groups'] = groups
-            save_db()
-        await event.edit(f"{msg}\n\nارجع للإعدادات عشان تشوف العدد", buttons=settings_menu())
-    elif data == b"start_post":
-        if is_posting:
-            return await event.answer("🚀 يعمل بالفعل!", alert=True)
-        asyncio.create_task(auto_publisher(event))
-    elif data == b"stop_post":
-        is_posting = False
-        await event.answer("🛑 توقف النشر.", alert=True)
-    elif data == b"add_sub" and is_admin(uid):
-        waiting_for[uid] = 'get_id'
-        await event.reply("👤 ارسل ايدي المستخدم:")
-    elif data == b"add_admin" and is_main_admin(uid):
-        waiting_for[uid] = 'get_admin_id'
-        await event.reply("⬆️ ارسل ايدي الأدمن الجديد:")
-    elif data == b"remove_admin" and is
+        db['pending_payments'].pop

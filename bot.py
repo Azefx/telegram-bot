@@ -14,7 +14,7 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "Devazf" # غير ده ليوزرك من غير @
+DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
 MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي "" لو مش عايز اشتراك إجباري
 
 bot = None
@@ -643,10 +643,4 @@ def setup_handlers():
             sent = 0
             for acc in accounts:
                 acc_id, _, session_string, phone, username, _, _, _, _, _ = acc
-                client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
-                try:
-                    await client.start()
-                    groups = await get_all_groups(client)
-                    for group in groups:
-                        try:
-                            await
+                client = TelegramClient(StringSession(session_string), int(API_ID),

@@ -1,655 +1,277 @@
-import os
 import asyncio
-import sqlite3
-import random
+import json
+import os
+import re
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.tl.types import InputPeerEmpty, Channel, Chat
-from telethon.errors import FloodWaitError, SlowModeWaitError, ChatWriteForbiddenError, UserBannedInChannelError, SessionPasswordNeededError, UserNotParticipantError
+from telethon.errors import SessionPasswordNeededError, FloodWaitError
 
-SOURCE_NAME = " Source programmer Azef"
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID")
-DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك انت
-MANDATORY_CHANNEL = "Spraize" # غير ده ليوزر القناة الإجبارية
+# --- البيانات الأساسية ---
+API_ID = 33595004
+API_HASH = 'cbd1066ed026997f2f4a7c4323b7bda7'
+BOT_TOKEN = '5759866264:AAEwiaoo-lT-SI6TQhHMTC59umgnkV5zIm4' 
+ADMIN_ID = 154919127
+DB_FILE = 'hero_data.json'
 
-bot = None
-conn = None
-c = None
+# --- نظام الحفظ والاشتراكات ---
+def load_db():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {
+        'session': None,
+        'super_groups': [],
+        'sleep_time': 30,
+        'msg_text': '',
+        'subs': {str(ADMIN_ID): '2099-01-01'}
+    }
+
+def save_db():
+    with open(DB_FILE, 'w', encoding='utf-8') as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+db = load_db()
 waiting_for = {}
-temp_data = {}
-broadcast_tasks = {}
-TEMP_MEDIA = {}
+login_temp = {}
+is_posting = False
 
-def init_db():
-    global conn, c
-    conn = sqlite3.connect('broadcaster.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, is_vip INTEGER DEFAULT 0, vip_expires TEXT, joined_at TEXT, is_trial INTEGER DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, session_string TEXT, phone TEXT, username TEXT, is_active INTEGER DEFAULT 1, last_used TEXT, groups_count INTEGER DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, content TEXT, media_id TEXT, style TEXT DEFAULT 'normal', emoji TEXT, created_at TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, post_id INTEGER, delay_min INTEGER, delay_max INTEGER, status TEXT DEFAULT 'running', sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, started_at TEXT)''')
-    conn.commit()
+# --- تشغيل البوت ---
+bot = TelegramClient('Hero_Fix', API_ID, API_HASH)
 
-def safe_parse_date(date_string):
-    try:
-        return datetime.fromisoformat(date_string)
-    except:
-        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
-
-def is_admin(user_id):
-    return user_id == int(ADMIN_ID)
-
-async def check_subscription(user_id):
-    if is_admin(user_id):
-        return True
-    try:
-        await bot.get_permissions(MANDATORY_CHANNEL, user_id)
-        return True
-    except UserNotParticipantError:
-        return False
-    except:
-        return True
-
-def is_vip(user_id):
-    if is_admin(user_id):
-        return True
-    c.execute("SELECT vip_expires, is_trial FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    if not row or not row[0]:
-        return False
-    expires = safe_parse_date(row[0])
-    is_trial = row[1]
-
-    if expires <= datetime.now() and is_trial == 1:
-        c.execute("UPDATE users SET is_vip=0, vip_expires=NULL, is_trial=0 WHERE user_id=?", (user_id,))
-        conn.commit()
-        return False
-
-    return expires > datetime.now()
-
-def create_user(user_id, username):
-    c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
-    is_new = not c.fetchone()
-    c.execute("INSERT OR IGNORE INTO users (user_id, username, joined_at) VALUES (?,?,?)", (user_id, username, datetime.now().isoformat()))
-
-    if is_new and not is_admin(user_id):
-        expires = datetime.now() + timedelta(hours=1)
-        c.execute("UPDATE users SET is_vip=1, vip_expires=?, is_trial=1 WHERE user_id=?", (expires.isoformat(), user_id))
-    conn.commit()
-    return is_new
-
-def add_vip(user_id, days):
-    expires = datetime.now() + timedelta(days=days)
-    c.execute("UPDATE users SET is_vip=1, vip_expires=?, is_trial=0 WHERE user_id=?", (expires.isoformat(), user_id))
-    conn.commit()
-    return expires
-
-def remove_vip(user_id):
-    c.execute("UPDATE users SET is_vip=0, vip_expires=NULL, is_trial=0 WHERE user_id=?", (user_id,))
-    conn.commit()
-
-def get_all_vips():
-    c.execute("SELECT * FROM users WHERE is_vip=1 AND vip_expires >? ORDER BY vip_expires DESC", (datetime.now().isoformat(),))
-    return c.fetchall()
-
-def add_account(owner_id, session_string, phone, username):
-    c.execute("INSERT INTO accounts (owner_id, session_string, phone, username, last_used) VALUES (?,?,?,?,?)", (owner_id, session_string, phone, username, datetime.now().isoformat()))
-    conn.commit()
-
-def get_user_accounts(user_id):
-    c.execute("SELECT * FROM accounts WHERE owner_id=? AND is_active=1 ORDER BY last_used ASC", (user_id,))
-    return c.fetchall()
-
-def delete_account(acc_id, owner_id):
-    c.execute("DELETE FROM accounts WHERE id=? AND owner_id=?", (acc_id, owner_id))
-    conn.commit()
-
-def save_post(user_id, content, media_id=None, style='normal', emoji=''):
-    c.execute("INSERT INTO posts (user_id, content, media_id, style, emoji, created_at) VALUES (?,?,?,?,?,?)", (user_id, content, media_id, style, emoji, datetime.now().isoformat()))
-    conn.commit()
-    return c.lastrowid
-
-def get_post(post_id):
-    c.execute("SELECT * FROM posts WHERE id=?", (post_id,))
-    return c.fetchone()
-
-def format_post(content, style, emoji):
-    if emoji:
-        content = f"{emoji} {content}"
-    if style == 'quote':
-        lines = content.split('\n')
-        content = '\n'.join([f"> {line}" for line in lines])
-    elif style == 'bold':
-        content = f"**{content}**"
-    elif style == 'bold_quote':
-        lines = content.split('\n')
-        content = '\n'.join([f"> **{line}**" for line in lines])
-    elif style == 'fancy':
-        content = f"✨ **{content}** ✨"
-    return content
-
-def create_campaign(user_id, post_id, delay_min, delay_max):
-    c.execute("INSERT INTO campaigns (user_id, post_id, delay_min, delay_max, started_at) VALUES (?,?,?,?,?)", (user_id, post_id, delay_min, delay_max, datetime.now().isoformat()))
-    conn.commit()
-    return c.lastrowid
-
-def update_campaign_stats(campaign_id, sent, failed):
-    c.execute("UPDATE campaigns SET sent_count=sent_count+?, failed_count=failed_count+? WHERE id=?", (sent, failed, campaign_id))
-    conn.commit()
-
-def stop_campaign(campaign_id):
-    c.execute("UPDATE campaigns SET status='stopped' WHERE id=?", (campaign_id,))
-    conn.commit()
-
-def get_campaign_stats():
-    c.execute("SELECT COUNT(*) FROM campaigns WHERE status='running'")
-    running = c.fetchone()[0]
-    c.execute("SELECT SUM(sent_count), SUM(failed_count) FROM campaigns")
-    stats = c.fetchone()
-    return running, stats[0] or 0, stats[1] or 0
-
-async def get_all_groups(client):
-    groups = []
-    try:
-        async for dialog in client.iter_dialogs():
-            entity = dialog.entity
-            if isinstance(entity, Chat):
-                groups.append(entity)
-            elif isinstance(entity, Channel):
-                if entity.broadcast or not entity.megagroup:
-                    continue
-                groups.append(entity)
-    except Exception as e:
-        print(f"Error getting groups: {e}")
-    return groups
-
-async def broadcast_task(user_id, campaign_id, post_id, accounts, delay_min, delay_max):
-    post = get_post(post_id)
-    if not post:
-        return
-    _, _, raw_content, media_id, style, emoji, _ = post
-    content = format_post(raw_content, style, emoji)
-    total_sent = 0
-    total_failed = 0
-    await bot.send_message(user_id, f"🚀 **بدأ النشر - {SOURCE_NAME}**\n\n📊 الحسابات: {len(accounts)}\n⏱️ التأخير: {delay_min}-{delay_max}ث\n🎨 الاستايل: {style}\n\nجاري النشر...")
-    for acc in accounts:
-        if broadcast_tasks.get(user_id)!= asyncio.current_task():
-            break
-        acc_id, _, session_string, phone, username, _, _, _ = acc
-        client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
+# --- دوال التحقق والمراقبة ---
+def is_sub(uid):
+    uid = str(uid)
+    if uid in db.get('subs', {}):
         try:
-            await client.start()
-            groups = await get_all_groups(client)
-            await bot.send_message(user_id, f"📱 {phone or username}\n📊 لقيت {len(groups)} جروب")
-            for group in groups:
-                if broadcast_tasks.get(user_id)!= asyncio.current_task():
+            expiry = datetime.strptime(db['subs'][uid], '%Y-%m-%d')
+            if expiry > datetime.now():
+                return True
+        except:
+            pass
+    return False
+
+async def send_log(event, action, text=""):
+    try:
+        user = await event.get_sender()
+        name = user.first_name if user else "Unknown"
+        uid = user.id if user else "Unknown"
+        log_msg = f"🔔 **إشعار مراقبة جديد**\n👤 المستخدم: {name}\n🆔 الايدي: `{uid}`\n🔘 الإجراء: {action}\n📥 النص: {text[:100]}"
+        await bot.send_message(ADMIN_ID, log_msg)
+    except:
+        pass
+
+# 🔘 الواجهة الرئيسية
+def main_menu(uid):
+    btns = [
+        [Button.inline("🔑 تسجيل الدخول", b"login_phone")],
+        [Button.inline("⚙️ إعدادات النشر", b"settings")],
+        [Button.inline("🚀 بدء النشر", b"start_post")]
+    ]
+    if uid == ADMIN_ID:
+        btns.append([Button.inline("🔐 نظام الاشتراك", b"admin_panel")])
+    return btns
+
+# 🔘 واجهة الإعدادات
+def settings_menu():
+    status = "🟢 مفعل ومربوط" if db['session'] else "🔴 غير مربوط"
+    return [
+        [Button.inline(status, b"none")],
+        [Button.inline("➕ إضافة سوبرات", b"add_links"), Button.inline("👤 ربط حساب", b"login_phone")],
+        [Button.inline("⏱️ الوقت", b"set_time"), Button.inline("📩 نص الرسالة", b"add_msg")],
+        [Button.inline("🔴 إيقاف", b"stop_post"), Button.inline("🟢 بدء النشر", b"start_post")],
+        [Button.inline("👥 عرض السوبرات", b"show_links")],
+        [Button.inline("🔙 رجوع", b"back_main")]
+    ]
+
+# 🔘 لوحة المطور
+def admin_panel():
+    return [
+        [Button.inline("➕ تفعيل مشترك", b"add_sub")],
+        [Button.inline("👥 قائمة المشتركين", b"list_subs")],
+        [Button.inline("🔙 رجوع", b"back_main")]
+    ]
+
+# --- استقبال الأوامر ---
+@bot.on(events.NewMessage(pattern='/start'))
+async def start(event):
+    uid = event.sender_id
+    if not is_sub(uid):
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\nارسل الايدي للمطور للتفعيل:\n🆔 الايدي: `{uid}`")
+    await event.reply("🚀 **بوت النشر التلقائي المطور**", buttons=main_menu(uid))
+
+@bot.on(events.NewMessage(pattern='/admin'))
+async def admin_cmd(event):
+    if event.sender_id == ADMIN_ID:
+        await event.reply("👑 **لوحة التحكم بالمشتركين:**", buttons=admin_panel())
+
+# --- محرك النشر الذكي ---
+async def auto_publisher(event):
+    global is_posting
+    if not db['session']:
+        return await event.reply("⚠️ سجل دخول أولاً!")
+    if not db['msg_text']:
+        return await event.reply("⚠️ ضيف نص الرسالة أولاً من الإعدادات!")
+    if not db['super_groups']:
+        return await event.reply("⚠️ ضيف سوبرات أولاً من الإعدادات!")
+
+    is_posting = True
+    client = TelegramClient(StringSession(db['session']), API_ID, API_HASH)
+    try:
+        await client.connect()
+        await event.reply("✅ **تم تشغيل المحرك الذكي للنشر..**")
+        while is_posting:
+            for target in db['super_groups']:
+                if not is_posting:
                     break
-                if hasattr(group, 'broadcast') and group.broadcast:
-                    continue
                 try:
-                    if media_id:
-                        await client.send_file(group, media_id, caption=content, parse_mode='md')
-                    else:
-                        await client.send_message(group, content, parse_mode='md')
-                    total_sent += 1
-                    update_campaign_stats(campaign_id, 1, 0)
-                    sleep_time = random.randint(delay_min, delay_max)
-                    await asyncio.sleep(sleep_time)
+                    await client.send_message(target, db['msg_text'])
+                    await asyncio.sleep(db['sleep_time'])
                 except FloodWaitError as e:
-                    await bot.send_message(user_id, f"⏳ {phone}: انتظار {e.seconds}ث...")
+                    await event.reply(f"⚠️ حماية: سأنتظر {e.seconds} ثانية.")
                     await asyncio.sleep(e.seconds)
-                except (ChatWriteForbiddenError, UserBannedInChannelError, SlowModeWaitError):
-                    total_failed += 1
-                    update_campaign_stats(campaign_id, 0, 1)
-                except Exception:
-                    total_failed += 1
-                    update_campaign_stats(campaign_id, 0, 1)
-                    await asyncio.sleep(5)
-            c.execute("UPDATE accounts SET last_used=?, groups_count=? WHERE id=?", (datetime.now().isoformat(), len(groups), acc_id))
-            conn.commit()
-        except Exception as e:
-            await bot.send_message(user_id, f"❌ خطأ في {phone}: {str(e)}")
-        finally:
-            await client.disconnect()
-        await asyncio.sleep(random.randint(30, 60))
-    await bot.send_message(user_id, f"✅ **انتهت النشر - {SOURCE_NAME}**\n\n📤 نجح: {total_sent}\n❌ فشل: {total_failed}")
-    stop_campaign(campaign_id)
-    if user_id in broadcast_tasks:
-        del broadcast_tasks[user_id]
+                except Exception as e:
+                    print(f"Error sending to {target}: {e}")
+                    continue
+            await asyncio.sleep(5)
+    except Exception as e:
+        await event.reply(f"❌ خطأ في المحرك: {str(e)}")
+    finally:
+        is_posting = False
+        await client.disconnect()
 
-def main_keyboard(user_id):
-    buttons = []
-    if is_vip(user_id):
-        buttons.append([Button.inline('📝 إنشاء منشور', 'create_post')])
-        buttons.append([Button.inline('🚀 بدء النشر', 'start_broadcast')])
-        buttons.append([Button.inline('🛑 إيقاف النشر', 'stop_broadcast')])
-        buttons.append([Button.inline('📱 إضافة حساب', 'add_account')])
-        buttons.append([Button.inline('📋 حساباتي', 'my_accounts')])
-    else:
-        buttons.append([Button.inline('💎 الاشتراك المدفوع', 'contact_dev')])
-        buttons.append([Button.inline('❌ حسابك غير مفعل', 'contact_admin')])
-    if is_admin(user_id):
-        buttons.append([Button.inline('👑 لوحة الأدمن', 'admin_panel')])
-    return buttons
+@bot.on(events.CallbackQuery)
+async def handler(event):
+    global is_posting
+    data, uid = event.data, event.sender_id
+    if not is_sub(uid):
+        return await event.answer("انتهى اشتراكك!", alert=True)
 
-def admin_keyboard():
-    return [[Button.inline('➕ تفعيل VIP', 'admin_add_vip'), Button.inline('❌ إلغاء VIP', 'admin_remove_vip')], [Button.inline('👥 قائمة الـVIP', 'admin_list_vips'), Button.inline('📊 إحصائيات', 'admin_stats')], [Button.inline('🔙 رجوع', 'back_main')]]
+    await send_log(event, "ضغط زر", data.decode())
 
-def style_keyboard():
-    return [[Button.inline('عادي', 'style_normal'), Button.inline('اقتباس >', 'style_quote')], [Button.inline('**عريض**', 'style_bold'), Button.inline('**اقتباس عريض**', 'style_bold_quote')], [Button.inline('✨ فخم ✨', 'style_fancy')], [Button.inline('تخطي التنسيق', 'style_skip')]]
+    if data == b"settings":
+        await event.edit("⚙️ الإعدادات:", buttons=settings_menu())
+    elif data == b"back_main":
+        await event.edit("🏠 الرئيسية:", buttons=main_menu(uid))
+    elif data == b"admin_panel" and uid == ADMIN_ID:
+        await event.edit("🔐 **إدارة المشتركين:**", buttons=admin_panel())
+    elif data == b"start_post":
+        if is_posting:
+            return await event.answer("🚀 يعمل بالفعل!", alert=True)
+        asyncio.create_task(auto_publisher(event))
+    elif data == b"stop_post":
+        is_posting = False
+        await event.answer("🛑 توقف النشر.", alert=True)
+    elif data == b"add_sub" and uid == ADMIN_ID:
+        waiting_for[uid] = 'get_id'
+        await event.reply("👤 ارسل ايدي المستخدم:")
+    elif data == b"list_subs" and uid == ADMIN_ID:
+        msg = "👥 المشتركين:\n" + "\n".join([f"- `{k}` ({v})" for k,v in db['subs'].items()])
+        await event.reply(msg)
+    elif data in [b"add_links", b"set_time", b"add_msg", b"login_phone", b"show_links"]:
+        if data == b"show_links":
+            res = "\n".join(db['super_groups']) if db['super_groups'] else "لا يوجد."
+            return await event.reply(f"👥 السوبرات المضافة حالياً:\n\n{res}")
 
-def emoji_keyboard():
-    return [[Button.inline('🔥', 'emoji_fire'), Button.inline('📢', 'emoji_megaphone')], [Button.inline('⭐', 'emoji_star'), Button.inline('💎', 'emoji_gem')], [Button.inline('✨ اكتب إيموجي مخصص', 'emoji_custom')], [Button.inline('بدون إيموجي', 'emoji_none')]]
+        waiting_for[uid] = data.decode()
 
-def setup_handlers():
-    @bot.on(events.NewMessage(pattern='/start'))
-    async def start(event):
-        user_id = event.sender_id
-        username = event.sender.username or f"user{user_id}"
-        is_new = create_user(user_id, username)
+        if data == b"login_phone":
+            await event.reply("🔄 أرسل رقم الهاتف المراد ربطه (مع رمز الدولة):")
+        elif data == b"add_links":
+            await event.reply("🔗 **أرسل روابط السوبرات الآن**\n(كل رابط في سطر واحد، أو معرف المجموعة)")
+        elif data == b"set_time":
+            await event.reply("⏱️ **أدخل مدة الانتظار بالثواني**")
+        elif data == b"add_msg":
+            await event.reply("📩 **أرسل نص الرسالة التي تريد نشرها الآن:**")
 
-        if not await check_subscription(user_id):
-            await event.reply(f"🚫 **أهلاً بيك في {SOURCE_NAME}**\n\nعشان تستخدم البوت لازم تشترك في القناة الرسمية الأول:", buttons=[
-                [Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')],
-                [Button.inline('✅ تحققت من الاشتراك', 'check_sub')]
-            ])
-            return
-
-        if is_new:
-            await bot.send_message(int(ADMIN_ID), f"🆕 **يوزر جديد دخل {SOURCE_NAME}**\n\nID: `{user_id}`\nUsername: @{username}\n\n🎁 تم تفعيل تجربة مجانية ساعة")
-
-        if not is_vip(user_id):
-            await event.reply(f"👋 **أهلاً بيك في {SOURCE_NAME}**\n\n❌ انتهت تجربتك المجانية\n\n💎 للتفعيل والاشتراك المدفوع دوس الزرار تحت", buttons=main_keyboard(user_id))
-            return
-
-        c.execute("SELECT vip_expires, is_trial FROM users WHERE user_id=?", (user_id,))
-        row = c.fetchone()
-        exp = safe_parse_date(row[0])
-        is_trial = row[1]
-        accounts = get_user_accounts(user_id)
-
-        trial_text = ""
-        if is_trial == 1:
-            remaining = exp - datetime.now()
-            minutes = int(remaining.total_seconds() / 60)
-            trial_text = f"\n\n🎁 **تجربة مجانية**: فاضل {minutes} دقيقة"
-
-        await event.reply(f"🔥 **أهلاً بيك في {SOURCE_NAME}**\n\n📅 صالح لحد: {exp.strftime('%Y-%m-%d %H:%M')}{trial_text}\n📱 الحسابات: {len(accounts)}\n\n💾 لحفظ صورة: ابعتها مع `/save اسم`\n📤 لإرسال محفوظ: `/send اسم`\n📋 لعرض المحفوظ: `/list`", buttons=main_keyboard(user_id))
-
-    @bot.on(events.NewMessage(pattern='/activate'))
-    async def activate_cmd(event):
-        if not is_admin(event.sender_id):
-            return
-        try:
-            args = event.text.split()[1:]
-            target_id = int(args[0])
-            days = int(args[1])
-            expires = add_vip(target_id, days=days)
-            await event.reply(f"✅ تم التفعيل\nID: `{target_id}`\nينتهي: {expires.strftime('%Y-%m-%d')}")
-            try:
-                await bot.send_message(target_id, f"💎 **تم تفعيل حسابك في {SOURCE_NAME}** ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
-            except:
-                pass
-        except Exception as e:
-            await event.reply(f"خطأ: {str(e)}\nالاستخدام: /activate user_id days")
-
-    @bot.on(events.NewMessage(pattern='/save'))
-    async def save_media(event):
-        user_id = event.sender_id
-        if not await check_subscription(user_id):
-            await event.reply("🚫 لازم تشترك في القناة الأول", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')]])
-            return
-        if not is_vip(user_id): return
-        if not event.photo:
-            await event.reply("❌ لازم تبعت الأمر مع صورة\nمثال: ابعت صورة والكابشن `/save عروض`")
-            return
-        try:
-            name = event.text.split(' ', 1)[1].strip()
-            if user_id not in TEMP_MEDIA: TEMP_MEDIA[user_id] = {}
-            TEMP_MEDIA[user_id][name] = event.photo
-            await event.reply(f"✅ تم حفظ الصورة باسم `{name}`\nلإرسالها اكتب `/send {name}`")
-        except IndexError:
-            await event.reply("❌ اكتب اسم بعد /save\nمثال: `/save عروض_اليوم`")
-
-    @bot.on(events.NewMessage(pattern='/send'))
-    async def send_media(event):
-        user_id = event.sender_id
-        if not await check_subscription(user_id):
-            await event.reply("🚫 لازم تشترك في القناة الأول", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')]])
-            return
-        if not is_vip(user_id): return
-        try:
-            name = event.text.split(' ', 1)[1].strip()
-            if user_id not in TEMP_MEDIA or name not in TEMP_MEDIA[user_id]:
-                await event.reply("❌ الاسم ده مش محفوظ عندك\nاكتب `/list` عشان تشوف المحفوظ")
-                return
-            await event.reply(f"تمام، اختار هتبعت `{name}` فين:", buttons=[
-                [Button.inline('🚀 لكل الجروبات', f'sendto_all_{name}')],
-                [Button.inline('🔙 إلغاء', 'back_main')]
-            ])
-        except IndexError:
-            await event.reply("اكتب `/send اسم_الصورة`")
-
-    @bot.on(events.NewMessage(pattern='/list'))
-    async def list_media(event):
-        user_id = event.sender_id
-        if not await check_subscription(user_id):
-            await event.reply("🚫 لازم تشترك في القناة الأول", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')]])
-            return
-        if not is_vip(user_id): return
-        if user_id not in TEMP_MEDIA or not TEMP_MEDIA[user_id]:
-            await event.reply("مفيش صور محفوظة عندك")
-            return
-        text = f"🖼 **الصور المحفوظة في {SOURCE_NAME}:**\n\n"
-        for name in TEMP_MEDIA[user_id].keys():
-            text += f"- `{name}`\n"
-        await event.reply(text + "\nلإرسال أي واحدة اكتب `/send الاسم`")
-
-    @bot.on(events.CallbackQuery)
-    async def callback(event):
-        user_id = event.sender_id
-        data = event.data.decode('utf-8')
-        create_user(user_id, event.sender.username or f"user{user_id}")
-
-        if data == 'check_sub':
-            if await check_subscription(user_id):
-                await event.edit("✅ **تمام! تم التحقق من اشتراكك**\n\nدوس /start عشان تبدأ")
-            else:
-                await event.answer("❌ لسه مش مشترك في القناة", alert=True)
-            return
-
-        if not await check_subscription(user_id):
-            await event.answer("🚫 لازم تشترك في القناة الأول", alert=True)
-            return
-
-        if data == 'contact_admin':
-            await event.answer("كلم المبرمج للتفعيل", alert=True)
-            return
-        if data == 'contact_dev':
-            await event.edit(f"💎 **للاشتراك المدفوع في {SOURCE_NAME}**\n\nراسل المطور عشان تعرف الأسعار والتفاصيل:", buttons=[
-                [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')],
-                [Button.inline('🔙 رجوع', 'back_main')]
-            ])
-            return
-        if data == 'create_post':
-            if not is_vip(user_id):
-                await event.answer("حسابك غير مفعل", alert=True)
-                return
-            waiting_for[user_id] = 'post_content'
-            await event.edit("📝 **الخطوة 1/3: المحتوى**\n\nابعت النص اللي عايز تنشره:\n\nممكن كمان تبعت صورة مع كابشن")
-        elif data.startswith('style_'):
-            style = data.split('_')[1]
-            if style == 'skip':
-                style = 'normal'
-            temp_data[user_id]['style'] = style
-            waiting_for[user_id] = 'post_emoji'
-            await event.edit("🎨 **الخطوة 3/3: اختار إيموجي مميز**\n\nهيتحط في بداية المنشور:", buttons=emoji_keyboard())
-        elif data == 'emoji_custom':
-            waiting_for[user_id] = 'emoji_custom_input'
-            await event.edit("💎 **ابعت الإيموجي بتاعك**\n\nانسخ الإيموجي من تليجرام وحطه هنا\nمثال: 🦄 أو أي إيموجي بريميوم عندك")
-        elif data.startswith('emoji_'):
-            emoji_name = data.split('_')[1]
-            emoji_map = {'fire': '🔥', 'megaphone': '📢', 'star': '⭐', 'gem': '💎'}
-            emoji = emoji_map.get(emoji_name, '') if emoji_name!= 'none' else ''
-            data_dict = temp_data.get(user_id, {})
-            post_id = save_post(user_id, data_dict['content'], data_dict.get('media_id'), data_dict['style'], emoji)
-            waiting_for[user_id] = None
-            temp_data.pop(user_id, None)
-            await event.edit(f"✅ **تم حفظ المنشور**\nID: {post_id}\nالإيموجي: {emoji or 'لا يوجد'}\n\nدوس 'بدء حملة نشر' عشان تبدأ", buttons=main_keyboard(user_id))
-        elif data == 'start_broadcast':
-            if not is_vip(user_id):
-                await event.answer("حسابك غير مفعل", alert=True)
-                return
-            accounts = get_user_accounts(user_id)
-            if not accounts:
-                await event.answer("❌ ضيف حسابات الأول", alert=True)
-                return
-            c.execute("SELECT * FROM posts WHERE user_id=? ORDER BY created_at DESC LIMIT 1", (user_id,))
-            post = c.fetchone()
-            if not post:
-                await event.answer("❌ اعمل منشور الأول", alert=True)
-                return
-            temp_data[user_id] = {'post_id': post[0], 'accounts': accounts}
-            waiting_for[user_id] = 'broadcast_delay'
-            await event.edit("⏱️ **ظبط التأخير**\n\nابعت رقمين: أقل وأكبر تأخير بالثواني\n\nمثال: `30 120`\nمن 30ث لدقيقتين عشوائي")
-        elif data == 'stop_broadcast':
-            if user_id in broadcast_tasks:
-                broadcast_tasks[user_id].cancel()
-                del broadcast_tasks[user_id]
-                await event.edit("🛑 تم إيقاف النشر", buttons=main_keyboard(user_id))
-            else:
-                await event.answer("مفيش حملة شغالة", alert=True)
-        elif data == 'add_account':
-            waiting_for[user_id] = 'account_phone'
-            await event.edit("📱 **إضافة حساب**\n\nابعت رقم الهاتف:\nمثال: +201234567890")
-        elif data == 'my_accounts':
-            accounts = get_user_accounts(user_id)
-            if not accounts:
-                await event.edit("❌ مفيش حسابات", buttons=main_keyboard(user_id))
-                return
-            text = f"📱 **حساباتك في {SOURCE_NAME}** ({len(accounts)})\n\n"
-            buttons = []
-            for acc in accounts:
-                acc_id, _, _, phone, username, _, last_used, groups_count = acc
-                text += f"📞 {phone or username}\n📊 الجروبات: {groups_count}\n\n"
-                buttons.append([Button.inline(f"🗑️ حذف {phone}", f'del_acc_{acc_id}')])
-            buttons.append([Button.inline('🔙 رجوع', 'back_main')])
-            await event.edit(text, buttons=buttons)
-        elif data.startswith('del_acc_'):
-            acc_id = int(data.split('_')[2])
-            delete_account(acc_id, user_id)
-            await event.answer("تم الحذف ✅")
-            await event.edit("تم حذف الحساب", buttons=main_keyboard(user_id))
-        elif data.startswith('sendto_all_'):
-            name = data.split('_', 2)[2]
-            if user_id not in TEMP_MEDIA or name not in TEMP_MEDIA[user_id]:
-                await event.answer("الصورة مش موجودة", alert=True)
-                return
-            photo = TEMP_MEDIA[user_id][name]
-            accounts = get_user_accounts(user_id)
-            if not accounts:
-                await event.answer("ضيف حسابات الأول", alert=True)
-                return
-            await event.edit(f"جاري إرسال `{name}` لكل الجروبات...")
-            sent = 0
-            for acc in accounts:
-                acc_id, _, session_string, phone, username, _, _, _ = acc
-                client = TelegramClient(StringSession(session_string), int(API_ID), API_HASH)
-                try:
-                    await client.start()
-                    groups = await get_all_groups(client)
-                    for group in groups:
-                        try:
-                            await client.send_file(group, photo)
-                            sent += 1
-                            await asyncio.sleep(3)
-                        except: pass
-                    await client.disconnect()
-                except: pass
-            await event.edit(f"✅ تم إرسال الصورة لـ {sent} جروب تقريباً", buttons=main_keyboard(user_id))
-        elif data == 'admin_panel':
-            if not is_admin(user_id):
-                return
-            c.execute("SELECT COUNT(*) FROM users WHERE is_vip=1 AND vip_expires >?", (datetime.now().isoformat(),))
-            vip_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM accounts")
-            acc_count = c.fetchone()[0]
-            running, sent, failed = get_campaign_stats()
-            await event.edit(f"👑 **لوحة المبرمج - {SOURCE_NAME}**\n\n👥 VIP نشط: {vip_count}\n📱 إجمالي الحسابات: {acc_count}\n🚀 حملات شغالة: {running}\n📤 إجمالي المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
-        elif data == 'admin_add_vip':
-            if not is_admin(user_id):
-                return
-            waiting_for[user_id] = 'admin_add_vip_input'
-            await event.edit("➕ **تفعيل VIP**\n\nابعت: user_id days\nمثال:\n123456789 30")
-        elif data == 'admin_remove_vip':
-            if not is_admin(user_id):
-                return
-            waiting_for[user_id] = 'admin_remove_vip_input'
-            await event.edit("❌ **إلغاء VIP**\n\nابعت user_id:\nمثال: 123456789")
-        elif data == 'admin_list_vips':
-            if not is_admin(user_id):
-                return
-            vips = get_all_vips()
-            if not vips:
-                await event.edit("مفيش VIP نشط", buttons=admin_keyboard())
-                return
-            text = f"👑 **قائمة الـVIP في {SOURCE_NAME}** ({len(vips)})\n\n"
-            for vip in vips[:20]:
-                uid, uname, _, exp, _, _ = vip
-                exp_date = safe_parse_date(exp).strftime('%Y-%m-%d')
-                text += f"`{uid}` @{uname}\n📅 ينتهي: {exp_date}\n\n"
-            await event.edit(text, buttons=admin_keyboard())
-        elif data == 'admin_stats':
-            if not is_admin(user_id):
-                return
-            c.execute("SELECT COUNT(*) FROM users")
-            total_users = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM posts")
-            total_posts = c.fetchone()[0]
-            running, sent, failed = get_campaign_stats()
-            await event.edit(f"📊 **إحصائيات {SOURCE_NAME}**\n\n👥 المستخدمين: {total_users}\n📝 المنشورات: {total_posts}\n🚀 حملات شغالة: {running}\n📤 المرسل: {sent}\n❌ الفاشل: {failed}", buttons=admin_keyboard())
-        elif data == 'back_main':
-            await event.edit("القائمة الرئيسية:", buttons=main_keyboard(user_id))
-
-    @bot.on(events.NewMessage)
-    async def handle_message(event):
-        user_id = event.sender_id
-        text = event.text
-
-        if not await check_subscription(user_id):
-            await event.reply("🚫 **لازم تشترك في القناة الأول**", buttons=[[Button.url('📢 اشترك هنا', f'https://t.me/{MANDATORY_CHANNEL.replace("@", "")}')], [Button.inline('✅ تحققت', 'check_sub')]])
-            return
-
-        if text == '/start' or text.startswith('/activate') or text.startswith('/save') or text.startswith('/send') or text.startswith('/list'):
-            return
-        if waiting_for.get(user_id) == 'post_content':
-            media_id = None
-            if event.media:
-                media_id = event.file.id
-            temp_data[user_id] = {'content': text or "", 'media_id': media_id}
-            waiting_for[user_id] = 'post_style'
-            await event.reply("🎨 **الخطوة 2/3: اختار التنسيق**", buttons=style_keyboard())
-        elif waiting_for.get(user_id) == 'emoji_custom_input':
-            custom_emoji = text.strip()
-            data_dict = temp_data.get(user_id, {})
-            post_id = save_post(user_id, data_dict['content'], data_dict.get('media_id'), data_dict['style'], custom_emoji)
-            waiting_for[user_id] = None
-            temp_data.pop(user_id, None)
-            await event.reply(f"✅ **تم حفظ المنشور**\nID: {post_id}\nالإيموجي: {custom_emoji}\n\nدوس 'بدء حملة نشر' عشان تبدأ", buttons=main_keyboard(user_id))
-        elif waiting_for.get(user_id) == 'broadcast_delay':
-            try:
-                parts = text.split()
-                delay_min = int(parts[0])
-                delay_max = int(parts[1])
-                if delay_min < 10:
-                    await event.reply("❌ أقل تأخير 10 ثواني")
-                    return
-                data = temp_data[user_id]
-                campaign_id = create_campaign(user_id, data['post_id'], delay_min, delay_max)
-                task = asyncio.create_task(broadcast_task(user_id, campaign_id, data['post_id'], data['accounts'], delay_min, delay_max))
-                broadcast_tasks[user_id] = task
-                waiting_for[user_id] = None
-                temp_data.pop(user_id, None)
-            except:
-                await event.reply("❌ الصيغة غلط\nمثال: 30 120")
-        elif waiting_for.get(user_id) == 'account_phone':
-            if not text.startswith('+'):
-                await event.reply("❌ لازم يبدأ بـ +\nمثال: +201234567890")
-                return
-            waiting_for[user_id] = 'account_code'
-            temp_data[user_id] = {'phone': text}
-            client = TelegramClient(StringSession(), int(API_ID), API_HASH)
-            try:
-                await client.connect()
-                sent = await client.send_code_request(text)
-                temp_data[user_id]['client'] = client
-                temp_data[user_id]['phone_code_hash'] = sent.phone_code_hash
-                await event.reply(f"📲 اتبعت كود لـ {text}\n\nابعته هنا:")
-            except Exception as e:
-                await event.reply(f"❌ خطأ: {str(e)}")
-                waiting_for[user_id] = None
-                await client.disconnect()
-        elif waiting_for.get(user_id) == 'account_code':
-            data = temp_data.get(user_id, {})
-            client = data.get('client')
-            if not client:
-                waiting_for[user_id] = None
-                return
-            try:
-                await client.sign_in(phone=data['phone'], code=text, phone_code_hash=data['phone_code_hash'])
-                session_string = client.session.save()
-                me = await client.get_me()
-                add_account(user_id, session_string, data['phone'], me.username or f"user{me.id}")
-                await event.reply(f"✅ تم إضافة الحساب\n@{me.username}", buttons=main_keyboard(user_id))
-                await client.disconnect()
-                waiting_for[user_id] = None
-                temp_data.pop(user_id, None)
-            except SessionPasswordNeededError:
-                waiting_for[user_id] = 'account_2fa'
-                await event.reply("🔒 الحساب عليه 2FA\nابعت كلمة السر:")
-            except Exception as e:
-                await event.reply(f"❌ الكود غلط: {str(e)}")
-                waiting_for[user_id] = None
-                await client.disconnect()
-        elif waiting_for.get(user_id) == 'account_2fa':
-            data = temp_data.get(user_id, {})
-            client = data.get('client')
-            if not client:
-                return
-            try:
-                await client.sign_in(password=text)
-                session_string = client.session.save()
-                me = await client.get_me()
-                add_account(user_id, session_string, data['phone'], me.username or f"user{me.id}")
-                await event.reply(f"✅ تم إضافة الحساب\n@{me.username}", buttons=main_keyboard(user_id))
-                await client.disconnect()
-                waiting_for[user_id] = None
-                temp_data.pop(user_id, None)
-            except Exception as e:
-                await event.reply(f"❌ كلمة السر غلط: {str(e)}")
-                waiting_for[user_id] = None
-                await client.disconnect()
-        elif waiting_for.get(user_id) == 'admin_add_vip_input':
-            if not is_admin(user_id):
-                return
-            try:
-                parts = text.split()
-                target_id = int(parts[0])
-                days = int(parts[1])
-                expires = add_vip(target_id, days)
-                waiting_for[user_id] = None
-                await event.reply(f"✅ تم التفعيل\nID: `{target_id}`\nينتهي: {expires.strftime('%Y-%m-%d')}", buttons=admin_keyboard())
-                try:
-                    await bot.send_message(target_id, f"💎 **تم تفعيل حسابك في {SOURCE_NAME}** ✅\nصالح لحد: {expires.strftime('%Y-%m-%d')}")
-                except:
-                    pass
-            except:
-                await event.reply("❌ الصيغة غلط\nuser_id days")
-        elif waiting_for.get(user_id) == 'admin_remove_vip_input':
-            if not is_admin(user_id):
-                return
-            try:
-                target_id = int(text)
-                remove_vip(target_id)
-                waiting_for[user_id] = None
-                await event.reply(f"✅ تم إلغاء VIP للـ `{target_id}`", buttons=admin_keyboard())
-            except:
-                await event.reply("❌ ID غلط")
-
-def main():
-    global bot
-    if not all([API_ID, API_HASH, BOT_TOKEN, ADMIN_ID]):
-        print("ERROR: Missing env vars")
+@bot.on(events.NewMessage)
+async def inputs(event):
+    uid = event.sender_id
+    if not event.text or event.text.startswith('/'):
         return
-    init_db()
-    bot = TelegramClient('broadcaster_bot', int(API_ID), API_HASH).start(bot_token=BOT_TOKEN)
-    setup_handlers()
-    print(f"{SOURCE_NAME} شغال...")
-    bot.run_until_disconnected()
+    step = waiting_for.get(uid)
 
-if __name__ == "__main__":
-    main()
+    if step == 'get_id':
+        waiting_for[uid] = f"get_days_{event.text.strip()}"
+        await event.reply("🕒 كم عدد أيام الاشتراك؟")
+    elif step and step.startswith('get_days_'):
+        target_id = step.split('_')[-1]
+        try:
+            days = int(event.text)
+            expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
+            db['subs'][target_id] = expiry
+            save_db()
+            await event.reply(f"✅ تم تفعيل {target_id} لمدة {days} يوم.")
+            waiting_for[uid] = None
+        except:
+            await event.reply("❌ ارسل رقم صحيح للأيام.")
+    elif step == 'add_links':
+        db['super_groups'] = [l.strip() for l in event.text.split('\n') if l.strip()]
+        save_db()
+        await event.reply(f"✅ تم حفظ {len(db['super_groups'])} سوبر.")
+        waiting_for[uid] = None
+    elif step == 'set_time':
+        try:
+            db['sleep_time'] = int(event.text)
+            save_db()
+            await event.reply("✅ تم حفظ وقت الانتظار.")
+            waiting_for[uid] = None
+        except:
+            await event.reply("❌ يرجى إرسال رقم صحيح فقط.")
+    elif step == 'add_msg':
+        db['msg_text'] = event.text
+        save_db()
+        await event.reply("✅ تم حفظ نص الرسالة الجديد.")
+        waiting_for[uid] = None
+    elif step == 'login_phone':
+        client = TelegramClient(StringSession(), API_ID, API_HASH)
+        await client.connect()
+        try:
+            req = await client.send_code_request(event.text.strip())
+            login_temp[uid] = {'c': client, 'p': event.text.strip(), 'h': req.phone_code_hash}
+            waiting_for[uid] = 'get_code'
+            await event.reply("✅ أرسل الكود الآن:")
+        except Exception as e:
+            await client.disconnect()
+            await event.reply(f"❌ خطأ: {e}")
+            waiting_for[uid] = None
+    elif step == 'get_code':
+        try:
+            t = login_temp[uid]
+            await t['c'].sign_in(t['p'], event.text.strip(), phone_code_hash=t['h'])
+            db['session'] = t['c'].session.save()
+            save_db()
+            await t['c'].disconnect()
+            await event.reply("🎉 تم ربط الحساب الشخصي بنجاح!", buttons=main_menu(uid))
+            waiting_for[uid] = None
+            login_temp.pop(uid, None)
+        except SessionPasswordNeededError:
+            waiting_for[uid] = 'get_pass'
+            await event.reply("🔐 الحساب محمي، أرسل رمز التحقق بخطوتين:")
+        except Exception as e:
+            await event.reply(f"❌ الكود غلط: {e}")
+    elif step == 'get_pass':
+        try:
+            await login_temp[uid]['c'].sign_in(password=event.text.strip())
+            db['session'] = login_temp[uid]['c'].session.save()
+            save_db()
+            await login_temp[uid]['c'].disconnect()
+            await event.reply("🎉 تم التحقق والحفظ بنجاح!")
+            waiting_for[uid] = None
+            login_temp.pop(uid, None)
+        except Exception as e:
+            await event.reply(f"❌ كلمة السر غلط: {e}")
+
+    if is_sub(uid) and event.text:
+        await send_log(event, "إرسال نص", event.text)
+
+async def main():
+    await bot.start(bot_token=BOT_TOKEN)
+    print("🚀 البوت شغال تمام - Programmer Azef!")
+    await bot.run_until_disconnected()
+
+if __name__ == '__main__':
+    asyncio.run(main())

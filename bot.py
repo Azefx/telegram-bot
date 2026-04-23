@@ -14,7 +14,7 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '5759866264:AAFI8depurjcQCUbra62Bzs2paaI
 ADMIN_ID = int(os.environ.get('ADMIN_ID', '154919127'))
 DEVELOPER_USERNAME = os.environ.get('DEVELOPER_USERNAME', "devazf")
 MANDATORY_CHANNEL = os.environ.get('MANDATORY_CHANNEL', "@vip6705")
-HELP_PHOTO = os.environ.get('HELP_PHOTO', 'IMG_20260423_102854_326.jpg')
+HELP_PHOTO = os.environ.get('HELP_PHOTO', 'image.jpg')
 DB_FILE = 'poster_data.json'
 BACKUP_FILE = 'sessions_backup.json'
 MAX_ACCOUNTS = 5
@@ -48,8 +48,8 @@ def load_db():
         'welcomed': [],
         'welcome_enabled': True,
         'welcome_text': '🌟 **أهلاً بيك في بوت النشر المطور**\n\n🚀 أسرع بوت نشر تلقائي على تليجرام\n⚡ نشر في مئات الجروبات بضغطة زر\n💎 مميزات احترافية\n👇 اختار من الأزرار تحت',
-        'welcome_photo': 'IMG_20260423_102854_326.jpg',
-        'start_photo': 'IMG_20260423_102854_326.jpg',
+        'welcome_photo': 'image.jpg',
+        'start_photo': 'image.jpg',
         'trial_users': [],
         'stats': {'total_sent': 0, 'start_time': str(datetime.now())}
     }
@@ -59,7 +59,6 @@ def save_db():
         json.dump(db, f, ensure_ascii=False, indent=2)
 
 def backup_all_sessions():
-    """نسخ احتياطي لكل الجلسات"""
     backup = {
         'backup_time': str(datetime.now()),
         'total_sessions': 0,
@@ -286,7 +285,7 @@ async def start(event):
             await bot.get_permissions(MANDATORY_CHANNEL, uid)
         except UserNotParticipantError:
             btns = [[Button.url("📢 اشترك الآن", f"https://t.me/{MANDATORY_CHANNEL.replace('@', '')}")]]
-            return await event.reply(f"⚠️ **مطلوب الاشتراك في القناة أولاً**\n\n{MANDATORY_CHANNEL}\n\nبعد الاشتراك اضغط /start", buttons=btns)
+            return await event.reply(f"⚠️ **لازم تشترك في القناة أولاً**\n\n{MANDATORY_CHANNEL}\n\nبعد الاشتراك ارجع اعمل /start", buttons=btns)
         except:
             pass
 
@@ -312,9 +311,9 @@ async def start(event):
         if str(uid) not in db['trial_users']:
             btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
         btns.append([Button.inline("💳 اشترك الآن", b"pay_menu")])
-        btns.append([Button.url("👨‍💻 اضـغط لـ مـراسلة المـبرمـج", f"https://t.me/{DEVELOPER_USERNAME}")])
+        btns.append([Button.url("👨‍💻 المبرمج", f"https://t.me/{DEVELOPER_USERNAME}")])
 
-        caption = f"🚀 **بوت النشر التلقائي المتطور**\n⚠️ **اشتراكك غير مفعل**\n🆔 ايديك: `{uid}`{get_time()}"
+        caption = f"🚀 **بوت النشر التلقائي المطور**\n⚠️ **اشتراكك غير مفعل**\n🆔 ايديك: `{uid}`{get_time()}"
 
         try:
             await bot.send_file(uid, file=db['start_photo'], caption=caption, buttons=btns)
@@ -322,7 +321,7 @@ async def start(event):
             await event.reply(caption, buttons=btns)
         return
 
-    caption = f"🚀 **بوت النشر التلقائي المتطور**\n\n✅ اشتراكك مفعل\n\n👇 اختار من الأزرار تحت{get_time()}"
+    caption = f"🚀 **بوت النشر التلقائي المطور**\n\n✅ اشتراكك مفعل\n\n👇 اختار من الأزرار تحت{get_time()}"
 
     try:
         await bot.send_file(uid, file=db['start_photo'], caption=caption, buttons=main_menu(uid))
@@ -336,7 +335,7 @@ async def help_command(event):
 
     if is_admin(uid):
         help_text = f"""
-🚀 **أوامر بوت النشر المتطور**
+🚀 **أوامر بوت النشر المطور**
 
 **👤 أوامر المستخدمين:**
 /start - القائمة الرئيسية
@@ -363,7 +362,7 @@ async def help_command(event):
 """
     else:
         help_text = f"""
-🚀 **بوت النشر التلقائي المتطور**
+🚀 **بوت النشر التلقائي المطور**
 
 **📋 الأوامر المتاحة:**
 /start - القائمة الرئيسية
@@ -570,7 +569,7 @@ async def callbacks(event):
             await bot.send_message(ADMIN_ID, admin_msg)
             await event.answer("✅ تم إرسال إشعار للمطور\nهيتواصل معاك قريب", alert=True)
         except:
-            await event.answer("❌ فشل الإرسال، كلم المبرمج مباشر", alert=True)
+            await event.answer("❌ فشل الإرسال، كلم المطور مباشر", alert=True)
         return
 
     if data == b"settings":
@@ -670,6 +669,7 @@ async def callbacks(event):
         waiting_for[uid] = 'set_delay'
         await event.edit(f"⏱️ **وقت الانتظار بين الرسائل**\n\nالحالي: {acc['msg_delay']} ثانية\n\nابعت الوقت الجديد:")
         return
+
     if data == b"toggle_mode":
         acc['send_all'] = not acc['send_all']
         save_db()
@@ -681,7 +681,8 @@ async def callbacks(event):
     if data == b"toggle_reply":
         db['auto_reply'] = not db['auto_reply']
         save_db()
-        status = "مفعل ✅" if db['auto_reply'] else "معطل ❌"
+        
+                status = "مفعل ✅" if db['auto_reply'] else "معطل ❌"
         await event.answer(f"الرد على المنشن: {status}", alert=True)
         await event.edit("⚙️ **الإعدادات**", buttons=settings_menu(uid))
         return
@@ -772,14 +773,14 @@ async def callbacks(event):
         if not is_admin(uid):
             return await event.answer("❌ للادمن فقط", alert=True)
         waiting_for[uid] = 'add_sub_id'
-        await event.edit("➕ **إضافة Vip**\n\nابعت ايدي المستخدم:")
+        await event.edit("➕ **إضافة اشتراك**\n\nابعت ايدي المستخدم:")
         return
 
     if data == b"remove_sub":
         if not is_admin(uid):
             return await event.answer("❌ للادمن فقط", alert=True)
         waiting_for[uid] = 'remove_sub'
-        await event.edit("➖ **إزالة Vip**\n\nابعت ايدي المستخدم:")
+        await event.edit("➖ **إزالة اشتراك**\n\nابعت ايدي المستخدم:")
         return
 
     if data == b"list_subs":

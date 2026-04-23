@@ -389,7 +389,7 @@ async def start(event):
 
     await event.reply(bot_name, buttons=main_menu(uid))
     @bot.on(events.CallbackQuery)
-async def callbacks(event):
+    async def callbacks(event):
     uid = event.sender_id
     data = event.data
 

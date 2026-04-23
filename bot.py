@@ -18,7 +18,6 @@ ADMIN_ID = 154919127 # المطور الرئيسي
 DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
 MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي ""
 DB_FILE = 'hero_data.json'
-WELCOME_PHOTO = "IMG_20260423_102854_326.jpg" 
 
 # --- بيانات الدفع - غيرها ببياناتك ---
 PAYMENT_INFO = {
@@ -329,13 +328,32 @@ async def start(event):
     bot_name = f"🚀 **بوت النشر التلقائي المتطور (متخطي الباند تماما) - Programmer Azef**{time_display}"
 
     if event.is_private and db.get('welcome_enabled', True):
-        if str(uid) not in db.get('welcomed_users', []):
-            welcome_msg = db.get('welcome_text', 'أهلاً بيك 🌟')
-            await event.reply(f"{welcome_msg}{time_display}")
-            db['welcomed_users'].append(str(uid))
-            save_db()
-            await send_log(event, "مستخدم جديد", "تم إرسال الترحيب")
-            return
+    if str(uid) not in db.get('welcomed_users', []):
+        welcome_msg = db.get('welcome_text', 'أهلاً بيك 🌟')
+        
+        btns = [
+            [Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")],
+            [Button.inline("💳 اشترك الآن", b"payment_menu")],
+            [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]
+        ]
+        
+        try:
+            # لو الصورة في نفس فولدر البوت هتشتغل على طول
+            await bot.send_file(
+                uid,
+                file=WELCOME_PHOTO,
+                caption=f"{welcome_msg}{time_display}",
+                buttons=btns
+            )
+        except Exception as e:
+            print(f"خطأ الصورة: {e}")
+            # لو حصل خطأ هيبعت نص بس
+            await event.reply(f"{welcome_msg}{time_display}", buttons=btns)
+            
+        db['welcomed_users'].append(str(uid))
+        save_db()
+        await send_log(event, "مستخدم جديد", "تم إرسال الترحيب بالصورة")
+        return
 
     if not is_sub(uid):
         btns = []

@@ -13,10 +13,10 @@ from telethon.extensions import markdown
 # --- البيانات الأساسية ---
 API_ID = 33595004
 API_HASH = 'cbd1066ed026997f2f4a7c4323b7bda7'
-BOT_TOKEN = '5759866264:AAFO8zeDmjcmENrx_vwiNGwGb95Fff37qxM'
+BOT_TOKEN = '5759866264:AAF10T-kVpeoZl8fmxc63hTCcwo8Hu04LcQ'
 ADMIN_ID = 154919127 # المطور الرئيسي
 DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
-MANDATORY_CHANNEL = "vip6705" # حط @قناتك أو سيبه فاضي ""
+MANDATORY_CHANNEL = "@vip6705" # لازم @ قبل اسم القناة
 DB_FILE = 'hero_data.json'
 WELCOME_PHOTO = "IMG_20260423_102854_326.jpg" # الصورة الافتراضية للترحيب
 
@@ -74,7 +74,7 @@ def load_db():
                 if 'trial_users' not in data:
                     data['trial_users'] = []
                 if 'groups_data' not in data:
-                    data['groups_data'] = {} # لحفظ اسم + ايدي الجروب
+                    data['groups_data'] = {}
                 return data
         except:
             pass
@@ -341,6 +341,16 @@ async def start(event):
     uid = event.sender_id
     time_display = get_current_time()
     bot_name = f"🚀 **بوت النشر التلقائي المطور - Programmer Azef**{time_display}"
+
+    # التحقق من الاشتراك الإجباري
+    if MANDATORY_CHANNEL and not is_admin(uid) and event.is_private:
+        try:
+            await bot.get_permissions(MANDATORY_CHANNEL, uid)
+        except UserNotParticipantError:
+            btns = [[Button.url("📢 اشترك في القناة", f"https://t.me/{MANDATORY_CHANNEL.replace('@', '')}")]]
+            return await event.reply(f"⚠️ **لازم تشترك في القناة أولاً عشان تستخدم البوت**\n\n👇 دوس الزر تحت واشترك وبعدين ارجع اعمل /start\n\n{MANDATORY_CHANNEL}", buttons=btns)
+        except:
+            pass
 
     if event.is_private and db.get('welcome_enabled', True):
         if str(uid) not in db.get('welcomed_users', []):

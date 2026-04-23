@@ -322,33 +322,46 @@ async def start_user_client():
         print(f"❌ خطأ في تشغيل الرد التلقائي: {e}")
         # --- استقبال الأوامر ---
 @bot.on(events.NewMessage(pattern='/start'))
+@bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
     uid = event.sender_id
     time_display = get_current_time()
-    bot_name = f"🚀 **بوت النشر التلقائي المتطور (متخطي الباند تماما) - Programmer Azef**{time_display}"
+    bot_name = f"🚀 **بوت النشر التلقائي المطور - Programmer Azef**{time_display}"
 
     if event.is_private and db.get('welcome_enabled', True):
-    if str(uid) not in db.get('welcomed_users', []):
-        welcome_msg = db.get('welcome_text', 'أهلاً بيك 🌟')
-        
-        btns = [
-            [Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")],
-            [Button.inline("💳 اشترك الآن", b"payment_menu")],
-            [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]
-        ]
-        
-        try:
-            # لو الصورة في نفس فولدر البوت هتشتغل على طول
-            await bot.send_file(
-                uid,
-                file=WELCOME_PHOTO,
-                caption=f"{welcome_msg}{time_display}",
-                buttons=btns
-            )
-        except Exception as e:
-            print(f"خطأ الصورة: {e}")
-            # لو حصل خطأ هيبعت نص بس
-            await event.reply(f"{welcome_msg}{time_display}", buttons=btns)
+        if str(uid) not in db.get('welcomed_users', []):
+            welcome_msg = db.get('welcome_text', 'أهلاً بيك 🌟')
+            
+            btns = [
+                [Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")],
+                [Button.inline("💳 اشترك الآن", b"payment_menu")],
+                [Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')]
+            ]
+            
+            try:
+                await bot.send_file(
+                    uid,
+                    file=WELCOME_PHOTO,
+                    caption=f"{welcome_msg}{time_display}",
+                    buttons=btns
+                )
+            except Exception as e:
+                print(f"خطأ الصورة: {e}")
+                await event.reply(f"{welcome_msg}{time_display}", buttons=btns)
+                
+            db['welcomed_users'].append(str(uid))
+            save_db()
+            await send_log(event, "مستخدم جديد", "تم إرسال الترحيب بالصورة")
+            return
+
+    if not is_sub(uid):
+        btns = []
+        if str(uid) not in db.get('trial_users', []):
+            btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
+        btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
+        btns.append([Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
+    await event.reply(bot_name, buttons=main_menu(uid))
             
         db['welcomed_users'].append(str(uid))
         save_db()

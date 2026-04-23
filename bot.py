@@ -18,6 +18,7 @@ ADMIN_ID = 154919127 # المطور الرئيسي
 DEVELOPER_USERNAME = "devazf" # غير ده ليوزرك من غير @
 MANDATORY_CHANNEL = "Spraize" # حط @قناتك أو سيبه فاضي ""
 DB_FILE = 'hero_data.json'
+WELCOME_PHOTO = "IMG_20260423_102854_326.jpg" 
 
 # --- بيانات الدفع - غيرها ببياناتك ---
 PAYMENT_INFO = {

@@ -321,7 +321,7 @@ async def start_user_client():
     except Exception as e:
         print(f"❌ خطأ في تشغيل الرد التلقائي: {e}")
         # --- استقبال الأوامر ---
-@bot.on(events.NewMessage(pattern='/start'))
+
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
     uid = event.sender_id
@@ -365,17 +365,8 @@ async def start(event):
             
         db['welcomed_users'].append(str(uid))
         save_db()
-        await send_log(event, "مستخدم جديد", "تم إرسال الترحيب بالصورة")
+        await send_log(event,"مستخدم جديد", "تم إرسال الترحيب بالصورة")
         return
-
-    if not is_sub(uid):
-        btns = []
-        if str(uid) not in db.get('trial_users', []):
-            btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
-        btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
-        btns.append([Button.url('👨‍💻 اضغط لـ مراسلة المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
-        return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المبرمج:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
-    await event.reply(bot_name, buttons=main_menu(uid))
 
 @bot.on(events.NewMessage(pattern='/admin'))
 async def admin_cmd(event):

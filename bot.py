@@ -525,6 +525,141 @@ async def callbacks(event):
         return
 
     if data == b"toggle_logs":
+@bot.on(events.CallbackQuery)
+async def callbacks(event):
+    uid = event.sender_id
+    data = event.data
+
+    # التحقق من الاشتراك الإجباري للأعضاء الجدد
+    if MANDATORY_CHANNEL and not is_admin(uid):
+        try:
+            await bot.get_permissions(MANDATORY_CHANNEL, uid)
+        except UserNotParticipantError:
+            return await event.answer(f"❌ لازم تشترك في القناة أولاً {MANDATORY_CHANNEL}", alert=True)
+        except:
+            pass
+
+    if data == b"back_main":
+        await event.edit("🔙 رجوع للقائمة الرئيسية", buttons=main_menu(uid))
+        return
+
+    if data == b"admin_panel":
+        if not is_admin(uid):
+            return await event.answer("❌ للادمن فقط", alert=True)
+        await event.edit("🔐 **لوحة تحكم الأدمن**", buttons=admin_panel(uid))
+        return
+
+    if data == b"change_welcome_photo":
+        if not is_main_admin(uid):
+            return await event.answer("للمطور فقط!", alert=True)
+        waiting_for[uid] = 'change_welcome_photo'
+        current = db.get('welcome_photo', 'مش محددة')
+        await event.edit(f"🖼️ **الصورة الحالية:**\n`{current}`\n\n📸 ابعت الصورة الجديدة دلوقتي\n🔗 أو ابعت رابط مباشر للصورة\n\n❌ /cancel للالغاء")
+        return
+
+    if data == b"payment_menu":
+        await event.edit("💳 **اختر باقة الاشتراك:**", buttons=payment_menu_keyboard())
+        return
+
+    if data == b"pay_1_day":
+        await event.edit("💳 **اختر طريقة الدفع:**", buttons=payment_methods_keyboard("1_day"))
+        return
+    if data == b"pay_7_days":
+        await event.edit("💳 **اختر طريقة الدفع:**", buttons=payment_methods_keyboard("7_days"))
+        return
+    if data == b"pay_15_days":
+        await event.edit("💳 **اختر طريقة الدفع:**", buttons=payment_methods_keyboard("15_days"))
+        return
+    if data == b"pay_30_days":
+        await event.edit("💳 **اختر طريقة الدفع:**", buttons=payment_methods_keyboard("30_days"))
+        return
+
+    if data.startswith(b'method_'):
+        parts = data.decode().split('_')
+        method = parts[1]
+        package = '_'.join(parts[2:])
+
+        pkg_info = PRICE_PACKAGES.get(package)
+        if not pkg_info:
+            return await event.answer("❌ باقة غير صحيحة", alert=True)
+
+        if method == 'vodafone':
+            info = f"📱 **فودافون كاش**\n💵 المبلغ: {pkg_info['price']}\n📞 الرقم: `{PAYMENT_INFO['vodafone']}`\n\n📸 بعد التحويل ابعت سكرين + رقم العملية"
+        elif method == 'ltc':
+            info = f"💎 **Litecoin LTC**\n💵 المبلغ: {pkg_info['price']}\n📬 المحفظة:\n`{PAYMENT_INFO['ltc']}`\n\n📸 بعد التحويل ابعت سكرين + Hash العملية"
+        elif method == 'ton':
+            info = f"💎 **Toncoin TON**\n💵 المبلغ: {pkg_info['price']}\n📬 المحفظة:\n`{PAYMENT_INFO['ton']}`\n\n📸 بعد التحويل ابعت سكرين + Hash العملية"
+        elif method == 'usdt':
+            info = f"💵 **USDT TRC20**\n💵 المبلغ: {pkg_info['price']}\n📬 المحفظة:\n`{PAYMENT_INFO['usdt']}`\n\n📸 بعد التحويل ابعت سكرين + Hash العملية"
+        else:
+            return await event.answer("❌ طريقة دفع غير صحيحة", alert=True)
+
+        waiting_for[uid] = f'payment_proof_{package}_{method}'
+        btns = [[Button.inline("🔙 رجوع", b"payment_menu")]]
+        await event.edit(f"{info}\n\n⏰ مدة الباقة: {pkg_info['label']}{get_current_time()}", buttons=btns)
+        return
+
+    if data == b"settings":
+        if not is_sub(uid):
+            return await event.answer("❌ لازم تشترك أول", alert=True)
+        await event.edit("⚙️ **إعدادات النشر التلقائي**", buttons=settings_menu())
+        return
+
+    if data == b"add_links":
+        if not is_admin(uid):
+            return await event.answer("❌ للادمن فقط", alert=True)
+        waiting_for[uid] = 'add_links'
+        await event.edit("➕ **إضافة جروب يدوي**\n\nابعت رابط الجروب أو الايدي:\nمثال: `https://t.me/groupname` أو `-1001234567890`\n\n❌ /cancel للالغاء")
+        return
+
+    if data == b"remove_link":
+        if not is_admin(uid):
+            return await event.answer("❌ للادمن فقط", alert=True)
+        if not db['super_groups']:
+            return await event.answer("❌ مفيش جروبات مضافة", alert=True)
+        waiting_for[uid] = 'remove_link'
+        groups_list = "\n".join([f"{i+1}. {db['groups_data'].get(g, g)}" for i, g in enumerate(db['super_groups'])])
+        await event.edit(f"🗑️ **حذف جروب**\n\nاختر رقم الجروب للحذف:\n{groups_list}\n\n❌ /cancel للالغاء")
+        return
+
+    if data == b"show_links":
+        if not is_admin(uid):
+            return await event.answer("❌ للادمن فقط", alert=True)
+        if not db['super_groups']:
+            return await event.answer("❌ مفيش جروبات مضافة", alert=True)
+        groups_list = "\n".join([f"{i+1}. {db['groups_data'].get(g, g)}\n `{g}`" for i, g in enumerate(db['super_groups'])])
+        await event.edit(f"👥 **الجروبات المضافة: {len(db['super_groups'])}**\n\n{groups_list}", buttons=[[Button.inline("🔙 رجوع", b"settings")]])
+        return
+
+    if data == b"fetch_groups":
+        if not is_admin(uid):
+            return await event.answer("❌ للادمن فقط", alert=True)
+        if not db['session']:
+            return await event.answer("❌ لازم تربط حساب أولاً", alert=True)
+
+        await event.answer("⏳ جاري جلب الجروبات...", alert=False)
+        groups, groups_data, msg = await get_all_groups_from_account()
+
+        if groups:
+            db['super_groups'] = groups
+            db['groups_data'] = groups_data
+            save_db()
+            await event.edit(f"✅ {msg}\n\nتم إضافة {len(groups)} جروب تلقائياً", buttons=[[Button.inline("🔙 رجوع", b"settings")]])
+        else:
+            await event.edit(f"❌ {msg}", buttons=[[Button.inline("🔙 رجوع", b"settings")]])
+        return
+
+    if data == b"toggle_welcome":
+        if not is_admin(uid):
+            return await event.answer("❌ للادمن فقط", alert=True)
+        db['welcome_enabled'] = not db.get('welcome_enabled', True)
+        save_db()
+        status = "مفعل ✅" if db['welcome_enabled'] else "معطل ❌"
+        await event.answer(f"الترحيب: {status}", alert=True)
+        await event.edit("⚙️ **إعدادات النشر التلقائي**", buttons=settings_menu())
+        return
+
+    if data == b"toggle_logs":
         if not is_admin(uid):
             return await event.answer("❌ للادمن فقط", alert=True)
         db['logs_enabled'] = not db.get('logs_enabled', True)
@@ -582,7 +717,7 @@ async def callbacks(event):
         await event.reply(f"✏️ **النص الحالي:**\n{current}\n\nابعت النص الجديد:")
         return
 
-@bot.on(events.NewMessage)
+    @bot.on(events.NewMessage)
 async def handle_all(event):
     uid = event.sender_id
     text = event.raw_text.strip()

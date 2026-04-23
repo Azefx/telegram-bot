@@ -28,10 +28,10 @@ PAYMENT_INFO = {
 }
 
 PRICE_PACKAGES = {
-    '1_days': {'days': 1, 'price': '0.5$ - 20 Eg', 'label': '7 أيام'},
-    '7_days': {'days': 7, 'price': '2$ - 70 Eg', 'label': '7 أيام'},
-    '15_days': {'days': 15, 'price': '3$ - 100 Eg', 'label': '15 يوم'},
-    '30_days': {'days': 30, 'price': '4$ - 150 Eg', 'label': 'شهر كامل'}
+    '1_days': {'days': 1, 'price': '0.3$ - 10 Eg', 'label': '7 أيام'},
+    '7_days': {'days': 7, 'price': '0.5$ - 20 Eg', 'label': '7 أيام'},
+    '15_days': {'days': 15, 'price': '1$ - 40 Eg', 'label': '15 يوم'},
+    '30_days': {'days': 30, 'price': '2$ - 70 Eg', 'label': 'شهر كامل'}
 }
 
 # --- نظام الحفظ والاشتراكات ---
@@ -252,7 +252,7 @@ def admin_panel(uid):
     ]
     if is_main_admin(uid):
         btns.append([Button.inline("⬆️ رفع أدمن", b"add_admin"), Button.inline("⬇️ تنزيل أدمن", b"remove_admin")])
-        btns.append([Button.inline("👑 قائمة الأدمنز", b"list_admins")])
+        btns.append([Button.inline("👑 قائمة الادمن", b"list_admins")])
         btns.append([Button.inline("⏳ المدفوعات المعلقة", b"pending_payments")])
     btns.append([Button.inline("🔙 رجوع", b"back_main")])
     return btns
@@ -260,6 +260,7 @@ def admin_panel(uid):
 # 🔘 قائمة الدفع
 def payment_menu_keyboard():
     return [
+        [Button.inline(f'1 أيام - {PRICE_PACKAGES["1_days"]["price"]}', 'pay_1_days')],
         [Button.inline(f'7 أيام - {PRICE_PACKAGES["7_days"]["price"]}', 'pay_7_days')],
         [Button.inline(f'15 يوم - {PRICE_PACKAGES["15_days"]["price"]}', 'pay_15_days')],
         [Button.inline(f'شهر كامل - {PRICE_PACKAGES["30_days"]["price"]}', 'pay_30_days')],
@@ -341,8 +342,8 @@ async def start(event):
         btns = []
         if str(uid) not in db.get('trial_users', []):
             btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
-        btns.append([Button.inline("💳 اشترك الآن", b"payment_menu")])
-        btns.append([Button.url('👨‍💻 راسل المبرمج', f'https://t.me/{DEVELOPER_USERNAME}')])
+        btns.append([Button.inline("💳 Vip اشترك الآن", b"payment_menu")])
+        btns.append([Button.url('👨‍💻 راسل مـبرمج الـبوت', f'https://t.me/{DEVELOPER_USERNAME}')])
         return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
     await event.reply(bot_name, buttons=main_menu(uid))
 

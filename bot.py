@@ -379,7 +379,7 @@ async def start(event):
             await send_log(event, "مستخدم جديد", "تم إرسال الترحيب بالصورة")
             return
 
-    if not is_sub(uid):
+        if not is_sub(uid):
         btns = []
         if str(uid) not in db.get('trial_users', []):
             btns.append([Button.inline("🎁 تجربة مجانية 1 ساعة", b"free_trial")])
@@ -388,8 +388,9 @@ async def start(event):
         return await event.reply(f"⚠️ **عذراً، اشتراكك غير مفعل**\n\n💳 تقدر تشترك من الزر تحت أو راسل المطور:\n🆔 الايدي: `{uid}`{time_display}", buttons=btns)
 
     await event.reply(bot_name, buttons=main_menu(uid))
-    @bot.on(events.CallbackQuery)
-    async def callbacks(event):
+
+@bot.on(events.CallbackQuery)
+async def callbacks(event):
     uid = event.sender_id
     data = event.data
 

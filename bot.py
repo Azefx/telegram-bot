@@ -682,7 +682,7 @@ async def callbacks(event):
         db['auto_reply'] = not db['auto_reply']
         save_db()
         
-                status = "مفعل ✅" if db['auto_reply'] else "معطل ❌"
+        status = "مفعل ✅" if db['auto_reply'] else "معطل ❌"
         await event.answer(f"الرد على المنشن: {status}", alert=True)
         await event.edit("⚙️ **الإعدادات**", buttons=settings_menu(uid))
         return

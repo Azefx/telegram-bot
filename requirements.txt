@@ -1,2 +1,2 @@
 telethon==1.43.2
-fbchat-mqtt==1.11.0
+git+https://github.com/fbchat-dev/fbchat-mqtt.git@main

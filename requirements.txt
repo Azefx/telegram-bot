@@ -1,2 +1,1 @@
-telethon==1.43.2
-fbchat==2.0.0
+pyTelegramBotAPI==4.12.0

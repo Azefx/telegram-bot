@@ -68,17 +68,17 @@ def show_main_menu(chat_id, user_id):
     markup = InlineKeyboardMarkup(row_width=2)
     
     # تفاصيل أزرار الحملة والنشر (كل زر منفصل تماماً)
-    btn_search_word = InlineKeyboardButton("🔍 زر كلمة البحث", callback_data="set_search")
-    btn_ad_text = InlineKeyboardButton("📝 زر نص رسالة الإعلان", callback_data="set_ad_text")
-    btn_ad_image = InlineKeyboardButton("🖼️ زر دعم صورة الإعلان", callback_data="set_ad_image")
+    btn_search_word = InlineKeyboardButton("🔍 كلمة البحث", callback_data="set_search")
+    btn_ad_text = InlineKeyboardButton("📝 نص رسالة الإعلان", callback_data="set_ad_text")
+    btn_ad_image = InlineKeyboardButton("🖼️ دعم صورة الإعلان", callback_data="set_ad_image")
     btn_edit_schedule = InlineKeyboardButton("⏱️ تعيين وتعديل الجدولة", callback_data="edit_schedule")
     
-    btn_toggle_on = InlineKeyboardButton("🟢 زر تشغيل النشر", callback_data="start_pub")
-    btn_toggle_off = InlineKeyboardButton("🔴 زر تعطيل النشر", callback_data="stop_pub")
+    btn_toggle_on = InlineKeyboardButton("🟢 تشغيل النشر", callback_data="start_pub")
+    btn_toggle_off = InlineKeyboardButton("🔴 تعطيل النشر", callback_data="stop_pub")
     
     # تفاصيل أزرار الحسابات والجروبات المنضم فيها
     btn_add_acc = InlineKeyboardButton("➕ إضافة حساب للمصفوفة", callback_data="add_account")
-    btn_check_acc = InlineKeyboardButton("🔍 زر فحص الحسابات", callback_data="check_accounts")
+    btn_check_acc = InlineKeyboardButton("🔍 فحص الحسابات", callback_data="check_accounts")
     btn_show_groups = InlineKeyboardButton("📁 عرض الجروبات المنضم فيها", callback_data="show_groups")
     btn_del_all_groups = InlineKeyboardButton("🚨 حذف كل الجروبات", callback_data="del_all_groups")
     
@@ -86,9 +86,9 @@ def show_main_menu(chat_id, user_id):
     btn_logout_all = InlineKeyboardButton("🚨 تسجيل خروج كل الحسابات", callback_data="logout_all")
     
     # أزرار المطور والمميزات العامة للمشروع
-    btn_features = InlineKeyboardButton("💡 زر مميزات البوت", callback_data="bot_features")
-    btn_dev = InlineKeyboardButton("👨‍💻 زر المبرمج", url=DEVELOPER_URL)
-    btn_channel = InlineKeyboardButton("📢 زر القناة", url=CHANNEL_URL)
+    btn_features = InlineKeyboardButton("💡 مميزات البوت", callback_data="bot_features")
+    btn_dev = InlineKeyboardButton("👨‍💻 المبرمج", url=DEVELOPER_URL)
+    btn_channel = InlineKeyboardButton("📢 القناة", url=CHANNEL_URL)
     
     # توزيع الأزرار بشكل متناسق
     markup.add(btn_search_word, btn_ad_text)
@@ -242,12 +242,12 @@ def callback_listener(call):
     elif call.data == "bot_features":
         bot.answer_callback_query(call.id)
         features_text = (
-            "💡 **زر مميزات البوت الفائقة (إصدار المطورين v5.0):**\n\n"
+            "💡 **زر مميزات البوت الفائقة (إصدار المطور عازف المحارب v5.0):**\n\n"
             "• **إضافة حسابات خطوة بخطوة**: نظام إدخال ذكي يطلب الحساب ثم كلمة المرور بشكل منفصل لضمان أعلى دقة.\n"
             "• **نظام الحسابات اللانهائية**: يدعم إدراج عدد لا حصر له من الحسابات بالرقم والبريد.\n"
-            "• **فلترة الأسماء والتصنيفات**: تصفية الجروبات المشترك بها ونشر الإعلان فقط بالجروبات التي تحمل اسماً محدداً مثل (القليوبيه).\n"
+            "• **فلترة الأسماء والتصنيفات**: تصفية الجروبات المشترك بها ونشر الإعلان فقط بالجروبات التي تحمل اسماً محدداً مثل (القاهرة).\n"
             "• **دعم حقيقي للصور والميديا**: ميزة رفع ملفات الصور مباشرة من تليجرام لدمجها داخل المنشورات المجدولة.\n"
-            "• **أكواد اشتراك مشفرة**: نظام حماية مدفوع بالكامل أونلاين يمنع فتح البوت إلا بأمر من المطور الرئيسي."
+            "• **أكواد اشتراك مشفرة**: نظام حماية مدفوع بالكامل أونلاين يمنع فتح البوت إلا بأمر من المبرمج الرئيسي."
         )
         bot.send_message(chat_id, features_text, parse_mode="Markdown")
 

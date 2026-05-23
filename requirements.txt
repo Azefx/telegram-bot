@@ -1,2 +1,2 @@
 telethon>=1.40.0
-fbchat>=2.0.0
+git+https://github.com/fbchat-dev/fbchat.git

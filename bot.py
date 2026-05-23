@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime
 from telethon import TelegramClient, events, Button
-from fbchat_mqtt import Client
+from fbchat import Client
 from fbchat_mqtt.models import Message, ImageAttachment, ThreadType
 
 API_ID = 35380416

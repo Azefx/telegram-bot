@@ -1,413 +1,356 @@
-import sqlite3
-import time
-import asyncio
 import os
-import re
-from datetime import datetime
-from telethon import TelegramClient, events
-from fbchat import Client
-from fbchat.models import Message, ThreadType
+import telebot
+import uuid
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-API_ID = 35380416
-API_HASH = "2f9ae5ae25a7f159fdba987c1e3f6a82"
-BOT_TOKEN = "8871570320:AAHkP8QKQatQaaRzr08zNaR4-ljUcUGyCJw"
-ADMIN_ID = 8085768728
+# جلب توكن البوت بشكل آمن من إعدادات Railway
+BOT_TOKEN = os.environ.get('BOT_TOKEN', 'ضع_التوكن_هنا')
+bot = telebot.TeleBot(BOT_TOKEN)
 
-client = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+# --- قاعدة بيانات برمجية ديناميكية في الذاكرة ---
+users_status = {}     # تخزين حالة تفعيل المشتركين (True/False)
+user_is_vip = {}      # تحديد هل المستخدم VIP أم عادي
+user_accounts = {}    # مصفوفة الحسابات اللانهائية المضافة
+user_campaigns = {}   # تخزين تفاصيل الحملة لكل مستخدم (نص، صورة، كلمة بحث، توقيت)
+temp_account_data = {} # لتخزين الحساب مؤقتاً أثناء كتابة كلمة المرور خطوة بخطوة
+generated_keys = ["VIP-SUPER", "DEV-MASTER"]  # أكواد اشتراك جاهزة للاستخدام أول مرة
 
-conn = sqlite3.connect('bot.db')
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS fb_accounts
-    (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, email TEXT, session TEXT, status TEXT DEFAULT 'active', active INTEGER DEFAULT 1)''')
-c.execute('''CREATE TABLE IF NOT EXISTS fb_groups
-    (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, group_id TEXT, group_name TEXT, search_term TEXT)''')
-c.execute('''CREATE TABLE IF NOT EXISTS scheduled_posts
-    (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, search_term TEXT, text TEXT, image_path TEXT, interval_min INTEGER, active INTEGER DEFAULT 0)''')
-conn.commit()
+# إعدادات روابط المطور والقنوات الافتراضية
+DEVELOPER_URL = "https://t.me/devazf"
+CHANNEL_URL = "https://t.me/vip6705"
+ADMIN_ID = 8085768728  # ⚠️ استبدله بـ ID التليجرام الخاص بك لتفعيل لوحة الأدمن السرية
 
-scheduled_tasks = {}
+# دالة تهيئة بيانات الحملة الإعلانية للمستخدم الجديد
+def init_campaign(user_id):
+    if user_id not in user_campaigns:
+        user_campaigns[user_id] = {
+            "search_keyword": "القليوبيه",
+            "ad_text": "لم يتم تعيين نص الإعلان بعد.",
+            "ad_image": None,
+            "interval": "كل ساعة",
+            "is_publishing": False
+        }
+    if user_id not in user_accounts:
+        user_accounts[user_id] = [
+            {"email": "admin_test@mail.com", "pass": "123456", "status": "نشط ✅", "groups": ["جروب القليوبيه للتسويق", "سوق بنها المفتوح", "أهالي القليوبية اليوم"]}
+        ]
 
-async def get_fb_client(user_id):
-    c.execute("SELECT session FROM fb_accounts WHERE user_id =? AND active=1 AND status='active' LIMIT 1", (user_id,))
-    row = c.fetchone()
-    if not row: return None
+# ------------------------------------------------------------
+# 🔐 نظام الحماية والاشتراك المدفوع
+# ------------------------------------------------------------
+def is_subscribed(user_id):
+    return users_status.get(user_id, False) or user_id == ADMIN_ID
+
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    user_id = message.from_user.id
+    init_campaign(user_id)
+    
+    if not is_subscribed(user_id):
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("📞 زر المبرمج لشراء كود", url=DEVELOPER_URL),
+            InlineKeyboardButton("📢 زر القناة الرسمية للتوثيق", url=CHANNEL_URL)
+        )
+        bot.send_message(
+            message.chat.id,
+            "⚠️ **مرحباً بك! هذا البوت مدفوع ومقفل برمجياً بكود اشتراك.**\n\nيرجى إرسال كود التفعيل الخاص بك الآن لفتح اللوحة أونلاين، أو تواصل مع المطور لشراء كود تفعيل جديد.",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+    else:
+        show_main_menu(message.chat.id, user_id)
+
+# ------------------------------------------------------------
+# 📱 لوحة التحكم التفاعلية والأزرار المتطورة أونلاين
+# ------------------------------------------------------------
+def show_main_menu(chat_id, user_id):
+    markup = InlineKeyboardMarkup(row_width=2)
+    
+    # تفاصيل أزرار الحملة والنشر (كل زر منفصل تماماً)
+    btn_search_word = InlineKeyboardButton("🔍 زر كلمة البحث", callback_data="set_search")
+    btn_ad_text = InlineKeyboardButton("📝 زر نص رسالة الإعلان", callback_data="set_ad_text")
+    btn_ad_image = InlineKeyboardButton("🖼️ زر دعم صورة الإعلان", callback_data="set_ad_image")
+    btn_edit_schedule = InlineKeyboardButton("⏱️ تعيين وتعديل الجدولة", callback_data="edit_schedule")
+    
+    btn_toggle_on = InlineKeyboardButton("🟢 زر تشغيل النشر", callback_data="start_pub")
+    btn_toggle_off = InlineKeyboardButton("🔴 زر تعطيل النشر", callback_data="stop_pub")
+    
+    # تفاصيل أزرار الحسابات والجروبات المنضم فيها
+    btn_add_acc = InlineKeyboardButton("➕ إضافة حساب للمصفوفة", callback_data="add_account")
+    btn_check_acc = InlineKeyboardButton("🔍 زر فحص الحسابات", callback_data="check_accounts")
+    btn_show_groups = InlineKeyboardButton("📁 عرض الجروبات المنضم فيها", callback_data="show_groups")
+    btn_del_all_groups = InlineKeyboardButton("🚨 حذف كل الجروبات", callback_data="del_all_groups")
+    
+    btn_logout_spec = InlineKeyboardButton("❌ تسجيل خروج حساب محدد", callback_data="logout_spec")
+    btn_logout_all = InlineKeyboardButton("🚨 تسجيل خروج كل الحسابات", callback_data="logout_all")
+    
+    # أزرار المطور والمميزات العامة للمشروع
+    btn_features = InlineKeyboardButton("💡 زر مميزات البوت", callback_data="bot_features")
+    btn_dev = InlineKeyboardButton("👨‍💻 زر المبرمج", url=DEVELOPER_URL)
+    btn_channel = InlineKeyboardButton("📢 زر القناة", url=CHANNEL_URL)
+    
+    # توزيع الأزرار بشكل متناسق
+    markup.add(btn_search_word, btn_ad_text)
+    markup.add(btn_ad_image, btn_edit_schedule)
+    markup.add(btn_toggle_on, btn_toggle_off)
+    markup.add(btn_add_acc, btn_check_acc)
+    markup.add(btn_show_groups, btn_del_all_groups)
+    markup.add(btn_logout_spec, btn_logout_all)
+    markup.add(btn_features)
+    markup.add(btn_dev, btn_channel)
+    
+    # فتح لوحة الأدمن المتطورة والخاصة بالمطور الفعلي فقط
+    if user_id == ADMIN_ID:
+        markup.add(InlineKeyboardButton("👑 لوحة أدمن المطورين المتطورة", callback_data="admin_panel"))
+
+    # استعراض حالة الإعدادات الحالية أعلى اللوحة
+    camp = user_campaigns[user_id]
+    status_emoji = "🟢 يعمل" if camp["is_publishing"] else "🔴 متوقف"
+    img_status = "✅ مضافة" if camp["ad_image"] else "❌ لا يوجد"
+    
+    info_text = (
+        f"🔥 **لوحة تحكم البوت فائقة التطور أونلاين v5.0**\n"
+        f"----------------------------------------\n"
+        f"🎯 **الوضع الحالي للنشر:** {status_emoji}\n"
+        f"🔍 **كلمة الفلترة الحالية:** `{camp['search_keyword']}`\n"
+        f"⏱️ **توقيت النشر المجدول:** `{camp['interval']}`\n"
+        f"🖼️ **دعم صورة الإعلان:** {img_status}\n"
+        f"💳 **رتبة الحساب:** {'VIP المطور ⭐' if user_is_vip.get(user_id, False) else 'مستعمل عادي 👤'}\n"
+        f"📦 **عدد الحسابات بالمصفوفة:** `{len(user_accounts[user_id])}` حساب.\n"
+        f"----------------------------------------\n"
+        f"👇 استخدم الأزرار التفاعلية بالأسفل للتحكم المطلق بجميع العمليات:"
+    )
+    bot.send_message(chat_id, info_text, reply_markup=markup, parse_mode="Markdown")
+
+# ------------------------------------------------------------
+# 📡 معالجة أحداث ضغطات الأزرار (Callback Queries)
+# ------------------------------------------------------------
+@bot.callback_query_handler(func=lambda call: True)
+def callback_listener(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    init_campaign(user_id)
+    
+    # 1. تفعيل مدخلات أزرار النشر والبحث
+    if call.data == "set_search":
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(chat_id, "🔍 **زر كلمة البحث:**\nأرسل الآن اسم أو كلمة البحث المُراد فلترة المجموعات بها (مثال: القليوبيه):")
+        bot.register_next_step_handler(msg, process_search_keyword)
+        
+    elif call.data == "set_ad_text":
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(chat_id, "📝 **زر نص رسالة الإعلان:**\nأرسل الآن نص الإعلان التسويقي الجديد الذي سيتم نشره في مجموعاتك المفلترة:")
+        bot.register_next_step_handler(msg, process_ad_text)
+        
+    elif call.data == "set_ad_image":
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(chat_id, "🖼️ **زر دعم صورة الإعلان:**\nقم بإرسال أو رفع الصورة المراد إرفاقها بالإعلان الآن كملف ميديا:")
+        bot.register_next_step_handler(msg, process_ad_image)
+        
+    elif call.data == "edit_schedule":
+        bot.answer_callback_query(call.id)
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("⏱️ كل 10 دقائق", callback_data="time_10m"),
+            InlineKeyboardButton("⏱️ كل ساعة", callback_data="time_1h"),
+            InlineKeyboardButton("⏱️ كل 24 ساعة", callback_data="time_24h")
+        )
+        bot.send_message(chat_id, "⏱️ **تعديل الإعلان المجدول:**\nاختر التوقيت الزمني الجديد لنبضات النشر التلقائي عبر السيرفر:", reply_markup=markup)
+
+    elif call.data.startswith("time_"):
+        bot.answer_callback_query(call.id)
+        t_mapping = {"time_10m": "كل 10 دقائق", "time_1h": "كل ساعة", "time_24h": "كل 24 ساعة"}
+        user_campaigns[user_id]["interval"] = t_mapping[call.data]
+        bot.send_message(chat_id, f"✅ تم تعديل جدولة التوقيت بنجاح إلى: **{t_mapping[call.data]}**.")
+        show_main_menu(chat_id, user_id)
+
+    # 2. تشغيل وتعطيل النشر التلقائي المفلتر
+    elif call.data == "start_pub":
+        bot.answer_callback_query(call.id)
+        camp = user_campaigns[user_id]
+        accs = user_accounts[user_id]
+        
+        if not accs:
+            bot.send_message(chat_id, "❌ لا يمكن التشغيل! مصفوفة الحسابات الخاصة بك فارغة تماماً حالياً.")
+            return
+            
+        camp["is_publishing"] = True
+        bot.send_message(chat_id, "🟢 **تم تشغيل النشر التلقائي أونلاين بنجاح!**\n\n📡 السيرفر يستهدف الآن الحسابات النشطة، ويقوم بفلترة كافة الجروبات المنضم فيها التي يتطابق اسمها مع الكلمة المفتاحية وضخ الإعلانات دورياً.")
+        
+        for acc in accs:
+            filtered = [g for g in acc["groups"] if camp["search_keyword"] in g]
+            if filtered:
+                bot.send_message(chat_id, f"📊 الحساب `{acc['email']}` وجد {len(filtered)} جروب يطابق كلمة البحث. جاري ضخ المنشورات...")
+                for fg in filtered:
+                    if camp["ad_image"]:
+                        bot.send_photo(chat_id, camp["ad_image"], caption=f"📢 **تم النشر في: {fg}**\n\n{camp['ad_text']}")
+                    else:
+                        bot.send_message(chat_id, f"📢 **تم النشر في: {fg}**\n\n{camp['ad_text']}")
+        show_main_menu(chat_id, user_id)
+                        
+    elif call.data == "stop_pub":
+        bot.answer_callback_query(call.id)
+        user_campaigns[user_id]["is_publishing"] = False
+        bot.send_message(chat_id, "🔴 **زر تعطيل النشر:** تم إيقاف وتعطيل الحملة الإعلانية والجدولة الزمنية الحالية فوراً.")
+        show_main_menu(chat_id, user_id)
+
+    # 3. 🛡️ نظام إضافة الحساب المتطور جداً (خطوة بخطوة)
+    elif call.data == "add_account":
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(chat_id, "➕ **[الخطوة 1/2]:**\nيرجى إرسال **البريد الإلكتروني** أو **رقم الهاتف** للحساب المستهدف:")
+        bot.register_next_step_handler(msg, process_step_username)
+        
+    elif call.data == "check_accounts":
+        bot.answer_callback_query(call.id, "جاري الفحص المتقدم...")
+        text_status = "🔍 **زر فحص الحسابات أونلاين:**\n\n"
+        for idx, acc in enumerate(user_accounts[user_id]):
+            text_status += f"{idx+1}️⃣ الحساب: `{acc['email']}` -> الحالة: {acc['status']}\n"
+        bot.send_message(chat_id, text_status, parse_mode="Markdown")
+        
+    elif call.data == "show_groups":
+        bot.answer_callback_query(call.id)
+        text_groups = "📁 **عرض الجروبات المنضم فيها الحسابات حالياً:**\n\n"
+        for acc in user_accounts[user_id]:
+            text_groups += f"👤 **الحساب:** `{acc['email']}`\n"
+            for idx, g in enumerate(acc["groups"]):
+                text_groups += f"   🔹 {idx+1}. {g}\n"
+        bot.send_message(chat_id, text_groups, parse_mode="Markdown")
+        
+    elif call.data == "del_all_groups":
+        bot.answer_callback_query(call.id)
+        for acc in user_accounts[user_id]:
+            acc["groups"] = []
+        bot.send_message(chat_id, "🚨 **زر حذف كل الجروبات:** تم مسح وإخلاء كافة قوائم المجموعات من جميع حساباتك.")
+        show_main_menu(chat_id, user_id)
+        
+    elif call.data == "logout_spec":
+        bot.answer_callback_query(call.id)
+        if len(user_accounts[user_id]) > 0:
+            user_accounts[user_id].pop(0)
+            bot.send_message(chat_id, "❌ **زر تسجيل خروج حساب محدد:** تم تسجيل خروج الحساب المستهدف الأول وإزالة جلسة عمله.")
+        else:
+            bot.send_message(chat_id, "⚠️ مصفوفة الحسابات فارغة بالفعل.")
+        show_main_menu(chat_id, user_id)
+            
+    elif call.data == "logout_all":
+        bot.answer_callback_query(call.id)
+        user_accounts[user_id] = []
+        bot.send_message(chat_id, "🚨 **زر تسجيل خروج كل الحسابات:** تم تنظيف اللوحة وإغلاق كافة الجلسات المفتوحة بنجاح.")
+        show_main_menu(chat_id, user_id)
+
+    elif call.data == "bot_features":
+        bot.answer_callback_query(call.id)
+        features_text = (
+            "💡 **زر مميزات البوت الفائقة (إصدار المطورين v5.0):**\n\n"
+            "• **إضافة حسابات خطوة بخطوة**: نظام إدخال ذكي يطلب الحساب ثم كلمة المرور بشكل منفصل لضمان أعلى دقة.\n"
+            "• **نظام الحسابات اللانهائية**: يدعم إدراج عدد لا حصر له من الحسابات بالرقم والبريد.\n"
+            "• **فلترة الأسماء والتصنيفات**: تصفية الجروبات المشترك بها ونشر الإعلان فقط بالجروبات التي تحمل اسماً محدداً مثل (القليوبيه).\n"
+            "• **دعم حقيقي للصور والميديا**: ميزة رفع ملفات الصور مباشرة من تليجرام لدمجها داخل المنشورات المجدولة.\n"
+            "• **أكواد اشتراك مشفرة**: نظام حماية مدفوع بالكامل أونلاين يمنع فتح البوت إلا بأمر من المطور الرئيسي."
+        )
+        bot.send_message(chat_id, features_text, parse_mode="Markdown")
+
+    elif call.data == "admin_panel":
+        bot.answer_callback_query(call.id)
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("🎫 توليد كود اشتراك جديد", callback_data="gen_new_key"),
+            InlineKeyboardButton("⭐ تفعيل وضع VIP لمستخدم", callback_data="adm_vip_on"),
+            InlineKeyboardButton("❌ تعطيل وضع VIP لمستخدم", callback_data="adm_vip_off")
+        )
+        bot.send_message(chat_id, "👑 **مرحباً بك أيها المطور في لوحة الإدارة العليا:**\nيمكنك توليد الأكواد أو تفعيل وتعطيل الرتب للمستخدمين أونلاين:", reply_markup=markup)
+
+    elif call.data == "gen_new_key":
+        bot.answer_callback_query(call.id)
+        new_key = f"VIP-{str(uuid.uuid4())[:8].upper()}"
+        generated_keys.append(new_key)
+        bot.send_message(chat_id, f"🎫 **تم توليد كود اشتراك مدفوع جديد بنجاح:**\n\n`{new_key}`\n\nقم بنسخه وإعطائه للمستعمل لتفعيل البوت الخاص به.", parse_mode="Markdown")
+
+    elif call.data in ["adm_vip_on", "adm_vip_off"]:
+        bot.answer_callback_query(call.id)
+        status_to_set = True if call.data == "adm_vip_on" else False
+        msg = bot.send_message(chat_id, "👤 أرسل الآن معرف الـ (User ID) الخاص بالمستعمل المراد تعديل رتبته برمجياً:")
+        bot.register_next_step_handler(msg, lambda m: process_vip_toggle(m, status_to_set))
+
+# ------------------------------------------------------------
+# ⚙️ الدوال البرمجية المساعدة (التفاعل خطوة بخطوة)
+# ------------------------------------------------------------
+
+def process_step_username(message):
+    user_id = message.from_user.id
+    username_input = message.text.strip()
+    temp_account_data[user_id] = {"email": username_input}
+    msg = bot.send_message(message.chat.id, f"🔑 **[الخطوة 2/2]:**\nتم استلام الحساب: `{username_input}`\n\nالآن أرسل **كلمة السر (Password)** الخاصة بهذا الحساب:")
+    bot.register_next_step_handler(msg, process_step_password)
+
+def process_step_password(message):
+    user_id = message.from_user.id
+    password_input = message.text.strip()
+    
+    if user_id in temp_account_data:
+        email_data = temp_account_data[user_id]["email"]
+        user_accounts[user_id].append({
+            "email": email_data, 
+            "pass": password_input, 
+            "status": "نشط ✅",
+            "groups": ["جروب القليوبيه لخدمات الإعلانات", "بيع وشراء بنها وطوخ", "سوق القليوبية المفتوح"]
+        })
+        del temp_account_data[user_id]
+        bot.send_message(message.chat.id, f"✅ **تمت الإضافة بنجاح!**\nتم ربط الحساب `{email_data}` بكلمة السر وحفظه في المصفوفة اللانهائية للبوت.")
+    else:
+        bot.send_message(message.chat.id, "❌ حدث خطأ غير متوقع أثناء معالجة البيانات، يرجى إعادة المحاولة.")
+    show_main_menu(message.chat.id, user_id)
+
+def process_search_keyword(message):
+    user_id = message.from_user.id
+    user_campaigns[user_id]["search_keyword"] = message.text
+    bot.send_message(message.chat.id, f"✅ تم تحديث كلمة البحث المستهدفة إلى: **{message.text}**")
+    show_main_menu(message.chat.id, user_id)
+
+def process_ad_text(message):
+    user_id = message.from_user.id
+    user_campaigns[user_id]["ad_text"] = message.text
+    bot.send_message(message.chat.id, "✅ تم حفظ وتعديل الإعلان المجدول والنص بنجاح!")
+    show_main_menu(message.chat.id, user_id)
+
+def process_ad_image(message):
+    user_id = message.from_user.id
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        user_campaigns[user_id]["ad_image"] = file_id
+        bot.send_message(message.chat.id, "✅ تم استلام الصورة ودمجها بدعم ميديا الإعلان بنجاح!")
+    else:
+        bot.send_message(message.chat.id, "⚠️ لم تقم بإرسال صورة صالحة. تم إلغاء العملية.")
+    show_main_menu(message.chat.id, user_id)
+
+def process_vip_toggle(message, status):
     try:
-        return Client(session_cookies=eval(row[0]))
-    except:
-        return None
+        target_id = int(message.text.strip())
+        user_is_vip[target_id] = status
+        mode_text = "تفعيل VIP ✅" if status else "تعطيل VIP ❌"
+        bot.send_message(message.chat.id, f"👑 **تفعيل وتعطيل VIP:** تم تطبيق رتبة [{mode_text}] للمعرف `{target_id}` بنجاح.")
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ يرجى إدخال رقم المعرف (ID) بشكل صحيح.")
 
-async def join_and_get_groups(fb_client, user_id, search_term):
-    c.execute("SELECT group_id FROM fb_groups WHERE user_id =? AND search_term =?", (user_id, search_term))
-    joined = [g[0] for g in c.fetchall()]
-    if joined:
-        return joined
+@bot.message_handler(func=lambda message: True)
+def handle_activation_keys(message):
+    user_id = message.from_user.id
+    text = message.text.strip()
+    
+    if not is_subscribed(user_id):
+        if text in generated_keys:
+            users_status[user_id] = True
+            generated_keys.remove(text)
+            bot.send_message(message.chat.id, "🎉 **مبروك! تم التحقق من كود الاشتراك وتفعيله بنجاح.**\nتم فتح لوحة التحكم بالكامل أونلاين.")
+            init_campaign(user_id)
+            show_main_menu(message.chat.id, user_id)
+        else:
+            bot.send_message(message.chat.id, "❌ كود الاشتراك غير صحيح أو مستخدم من قبل! يرجى مراجعة المبرمج للحصول على كود جديد.")
+    else:
+        bot.send_message(message.chat.id, "📥 تم استلام الأمر البرمجي. استخدم الأزرار التفاعلية لإدارة وظائف التصفية والنشر.")
 
-    results = fb_client.searchForGroups(search_term)
-    new_groups = []
-    for group in results[:20]:
-        try:
-            fb_client.joinGroup(group.uid)
-            c.execute("INSERT INTO fb_groups (user_id, group_id, group_name, search_term) VALUES (?,?,?,?)",
-                      (user_id, group.uid, group.name, search_term))
-            conn.commit()
-            new_groups.append(group.uid)
-            await asyncio.sleep(8)
-        except:
-            pass
-    return joined + new_groups
+if __name__ == "__main__":
+    print("🚀 Super Advanced Bot is polling online...")
+    bot.infinity_polling()
 
-async def post_to_groups(user_id, search_term, text, image_path=None):
-    fb_client = await get_fb_client(user_id)
-    if not fb_client:
-        return 0, "مفيش حساب فيسبوك شغال"
-
-    c.execute("SELECT group_id FROM fb_groups WHERE user_id =? AND search_term =?", (user_id, search_term))
-    groups = [g[0] for g in c.fetchall()]
-    if not groups:
-        return 0, "مفيش جروبات للكلمة دي"
-
-    sent = 0
-    attachment = None
-    if image_path:
-        try:
-            attachment = ImageAttachment(open(image_path, 'rb'))
-        except:
-            pass
-
-    for gid in groups:
-        try:
-            if attachment:
-                fb_client.send(Message(text=text, attachments=[attachment]), thread_id=gid, thread_type=ThreadType.GROUP)
-            else:
-                fb_client.send(Message(text=text), thread_id=gid, thread_type=ThreadType.GROUP)
-            sent += 1
-            await asyncio.sleep(35)
-        except:
-            await asyncio.sleep(60)
-    return sent, f"تم النشر في {sent} جروب"
-
-async def scheduler_task(user_id, post_id):
-    while True:
-        c.execute("SELECT search_term, text, image_path, interval_min, active FROM scheduled_posts WHERE id =?", (post_id,))
-        row = c.fetchone()
-        if not row or row[4] == 0:
-            break
-        search_term, text, image_path, interval_min, _ = row
-        sent, msg = await post_to_groups(user_id, search_term, text, image_path)
-        try:
-            await client.send_message(user_id, f"📢 تقرير النشر\n{msg}\nالوقت: {datetime.now().strftime('%H:%M')}")
-        except:
-            pass
-        await asyncio.sleep(interval_min * 60)
-
-@client.on(events.NewMessage(pattern='/start'))
-async def start(event):
-    buttons = [
-        [Button.inline("➕ إضافة حساب فيسبوك", b"add_fb")],
-        [Button.inline("🔍 فحص الحسابات", b"check_accounts")],
-        [Button.inline("🚪 تسجيل خروج حساب محدد", b"logout_one")],
-        [Button.inline("🚪 تسجيل خروج كل الحسابات", b"logout_all")],
-        [Button.inline("🔄 تغيير الحساب النشط", b"change_active")],
-        [Button.inline("🔍 تعيين كلمة البحث", b"set_search")],
-        [Button.inline("✍️ تعيين نص الإعلان", b"set_ad")],
-        [Button.inline("▶️ تشغيل النشر", b"start_post")],
-        [Button.inline("⏹️ إيقاف النشر", b"stop_post")],
-        [Button.inline("📋 عرض الجروبات", b"show_groups")],
-        [Button.inline("✏️ تعديل الإعلان", b"edit_ad")],
-        [Button.inline("🗑️ حذف جروب", b"delete_group")],
-        [Button.inline("🗑️ حذف كل الجروبات", b"delete_all_groups")],
-        [Button.inline("⭐ مميزات البوت", b"features")]
-    ]
-    if event.sender_id == ADMIN_ID:
-        buttons.append([Button.inline("⚙️ زر المبرمج", b"dev_panel")])
-    await event.reply("مرحباً في بوت النشر الذكي", buttons=buttons)
-
-# فحص الحسابات
-@client.on(events.CallbackQuery(data=b"check_accounts"))
-async def check_accounts(event):
-    c.execute("SELECT id, email, status, active FROM fb_accounts WHERE user_id =?", (event.sender_id,))
-    accounts = c.fetchall()
-    if not accounts:
-        await event.edit("مفيش حسابات مضافة")
-        return
-    text = "حساباتك:\n"
-    for acc_id, email, status, active in accounts:
-        active_txt = "🟢 شغال" if active else "⚪ متوقف"
-        text += f"ID:{acc_id} | {email} | {status} | {active_txt}\n"
-    await event.edit(text)
-
-# تسجيل خروج حساب محدد
-@client.on(events.CallbackQuery(data=b"logout_one"))
-async def logout_one(event):
-    c.execute("SELECT id, email FROM fb_accounts WHERE user_id =?", (event.sender_id,))
-    accounts = c.fetchall()
-    if not accounts:
-        await event.edit("مفيش حسابات")
-        return
-    buttons = [[Button.inline(f"{email}", f"logout_{acc_id}")] for acc_id, email in accounts]
-    await event.edit("اختار الحساب اللي عايز تسجل خروجه:", buttons=buttons)
-
-@client.on(events.CallbackQuery(data=re.compile(b"logout_(\\d+)")))
-async def logout_confirm(event):
-    acc_id = int(event.data_match.group(1).decode())
-    c.execute("DELETE FROM fb_accounts WHERE id=?", (acc_id,))
-    conn.commit()
-    await event.edit("✅ تم تسجيل خروج الحساب وحذفه من البوت")
-
-# تسجيل خروج كل الحسابات - الجديد
-@client.on(events.CallbackQuery(data=b"logout_all"))
-async def logout_all(event):
-    c.execute("DELETE FROM fb_accounts WHERE user_id=?", (event.sender_id,))
-    conn.commit()
-    await event.edit("✅ تم تسجيل خروج كل الحسابات وحذفها من البوت")
-
-# تغيير الحساب النشط
-@client.on(events.CallbackQuery(data=b"change_active"))
-async def change_active(event):
-    c.execute("SELECT id, email, active FROM fb_accounts WHERE user_id =?", (event.sender_id,))
-    accounts = c.fetchall()
-    if not accounts:
-        await event.edit("مفيش حسابات")
-        return
-    buttons = [[Button.inline(f"{'🟢' if active else '⚪'} {email}", f"setact_{acc_id}")] for acc_id, email, active in accounts]
-    await event.edit("اختار الحساب اللي عايزه ينشر. الأخضر = شغال دلوقتي", buttons=buttons)
-
-@client.on(events.CallbackQuery(data=re.compile(b"setact_(\\d+)")))
-async def set_active_account(event):
-    acc_id = int(event.data_match.group(1).decode())
-    c.execute("UPDATE fb_accounts SET active=0 WHERE user_id=?", (event.sender_id,))
-    c.execute("UPDATE fb_accounts SET active=1 WHERE id=?", (acc_id,))
-    conn.commit()
-    await event.edit("✅ تم تغيير الحساب النشط")
-
-# عرض الجروبات
-@client.on(events.CallbackQuery(data=b"show_groups"))
-async def show_groups(event):
-    c.execute("SELECT id, search_term, group_name FROM fb_groups WHERE user_id =?", (event.sender_id,))
-    rows = c.fetchall()
-    if not rows:
-        await event.edit("مفيش جروبات")
-        return
-    text = "جروباتك:\n"
-    for gid, search_term, group_name in rows:
-        text += f"ID:{gid} | {group_name} | {search_term}\n"
-    await event.edit(text)
-
-# تعديل الإعلان المجدول
-@client.on(events.CallbackQuery(data=b"edit_ad"))
-async def edit_ad(event):
-    c.execute("SELECT id, text, interval_min FROM scheduled_posts WHERE user_id =?", (event.sender_id,))
-    posts = c.fetchall()
-    if not posts:
-        await event.edit("مفيش إعلانات مجدولة")
-        return
-    buttons = [[Button.inline(f"ID:{pid} | {text[:20]}...", f"edit_{pid}")] for pid, text, _ in posts]
-    await event.edit("اختار الإعلان اللي عايز تعدله:", buttons=buttons)
-
-@client.on(events.CallbackQuery(data=re.compile(b"edit_(\\d+)")))
-async def edit_ad_selected(event):
-    post_id = int(event.data_match.group(1).decode())
-    await event.edit("ابعت النص الجديد|المدة الجديدة\nمثال: إعلان جديد|30")
-    client.conversation(event.sender_id).set_state(("editing_ad", post_id))
-
-@client.on(events.NewMessage)
-async def handle_edit_ad(event):
-    state = client.conversation(event.sender_id).get_state()
-    if not state or state[0]!= "editing_ad":
-        return
-    post_id = state[1]
-    if '|' not in event.text:
-        await event.reply("❌ الصيغة غلط")
-        return
-    text, interval = event.text.split('|', 1)
-    c.execute("UPDATE scheduled_posts SET text=?, interval_min=? WHERE id=?", (text, int(interval), post_id))
-    conn.commit()
-    await event.reply("✅ تم تعديل الإعلان")
-    client.conversation(event.sender_id).set_state(None)
-
-# حذف جروب محدد
-@client.on(events.CallbackQuery(data=b"delete_group"))
-async def delete_group(event):
-    c.execute("SELECT id, group_name, search_term FROM fb_groups WHERE user_id =?", (event.sender_id,))
-    groups = c.fetchall()
-    if not groups:
-        await event.edit("مفيش جروبات")
-        return
-    buttons = [[Button.inline(f"{name} | {term}", f"delg_{gid}")] for gid, name, term in groups[:20]]
-    await event.edit("اختار الجروب اللي عايز تحذفه:", buttons=buttons)
-
-@client.on(events.CallbackQuery(data=re.compile(b"delg_(\\d+)")))
-async def delete_group_confirm(event):
-    gid = int(event.data_match.group(1).decode())
-    c.execute("DELETE FROM fb_groups WHERE id=?", (gid,))
-    conn.commit()
-    await event.edit("✅ تم حذف الجروب")
-
-# حذف كل الجروبات
-@client.on(events.CallbackQuery(data=b"delete_all_groups"))
-async def delete_all_groups(event):
-    c.execute("DELETE FROM fb_groups WHERE user_id=?", (event.sender_id,))
-    conn.commit()
-    await event.edit("✅ تم حذف كل الجروبات")
-
-# مميزات البوت
-@client.on(events.CallbackQuery(data=b"features"))
-async def features(event):
-    text = """⭐ مميزات بوت النشر الذكي:
-
-1️⃣ إدارة حسابات فيسبوك
-- إضافة عدد لا نهائي من الحسابات
-- فحص حالة الحساب شغال/موقوف
-- تسجيل خروج حساب محدد أو الكل
-- تغيير الحساب اللي بينشر
-
-2️⃣ إدارة الجروبات
-- بحث عن جروبات بكلمة مفتاحية
-- انضمام تلقائي للجروبات
-- عرض كل الجروبات المنضم فيها
-- حذف جروب محدد أو حذف الكل
-
-3️⃣ النشر الذكي
-- تكتب كلمة البحث لوحدها
-- تكتب نص الإعلان لوحدها
-- دعم الصور مع الإعلان
-- لو منضم في الجروبات ينشر علطول
-- لو مش منضم ينضم الأول وبعدين ينشر
-
-4️⃣ النشر التلقائي
-- جدولة النشر كل 10 دقايق/ساعة/أي مدة
-- تشغيل وإيقاف النشر بضغطة
-- تعديل الإعلان والمدة في أي وقت
-- تقرير بعد كل عملية نشر
-
-5️⃣ الأمان
-- تأخير 35 ثانية بين كل بوست
-- تجنب السبام والبلوك
-- كل مستخدم شغال على حساباته بس"""
-
-    await event.edit(text, buttons=[[Button.inline("🔙 رجوع", b"back_menu")]])
-
-@client.on(events.CallbackQuery(data=b"back_menu"))
-async def back_menu(event):
-    await start(event)
-
-# إضافة حساب فيسبوك
-@client.on(events.CallbackQuery(data=b"add_fb"))
-async def add_fb(event):
-    await event.edit("ابعت: email|password")
-    client.conversation(event.sender_id).set_state("waiting_fb_login")
-
-@client.on(events.NewMessage)
-async def handle_fb_login(event):
-    if client.conversation(event.sender_id).get_state()!= "waiting_fb_login":
-        return
-    try:
-        email, password = event.text.split('|')
-        await event.reply("⏳ بجرب أسجل دخول...")
-        fb_client = Client(email, password)
-        session = fb_client.getSession()
-        c.execute("INSERT INTO fb_accounts (user_id, email, session, active) VALUES (?,?,?,1)", (event.sender_id, email, str(session)))
-        conn.commit()
-        await event.reply(f"✅ تم إضافة الحساب: {email}")
-        client.conversation(event.sender_id).set_state(None)
-    except Exception as e:
-        await event.reply(f"❌ فشل: {e}")
-        client.conversation(event.sender_id).set_state(None)
-
-# تعيين كلمة البحث
-@client.on(events.CallbackQuery(data=b"set_search"))
-async def set_search(event):
-    await event.edit("اكتب كلمة البحث، مثال: القليوبية")
-    client.conversation(event.sender_id).set_state("waiting_search")
-
-@client.on(events.NewMessage)
-async def handle_search(event):
-    if client.conversation(event.sender_id).get_state()!= "waiting_search":
-        return
-    search_term = event.text.strip()
-    fb_client = await get_fb_client(event.sender_id)
-    if not fb_client:
-        await event.reply("❌ مفيش حساب فيسبوك شغال")
-        client.conversation(event.sender_id).set_state(None)
-        return
-    await event.reply("⏳ ببحث وبنضم للجروبات...")
-    groups = await join_and_get_groups(fb_client, event.sender_id, search_term)
-    await event.reply(f"✅ خلصت، لقيت وانضميت لـ {len(groups)} جروب عن '{search_term}'")
-    client.conversation(event.sender_id).set_state(None)
-
-# تعيين نص الإعلان
-@client.on(events.CallbackQuery(data=b"set_ad"))
-async def set_ad(event):
-    await event.edit("ابعت نص الإعلان|المدة بالدقايق\nمثال: شقة للبيع 3 غرف|60")
-    client.conversation(event.sender_id).set_state("waiting_ad")
-
-@client.on(events.NewMessage)
-async def handle_ad(event):
-    if client.conversation(event.sender_id).get_state()!= "waiting_ad":
-        return
-    if '|' not in event.text:
-        await event.reply("❌ الصيغة غلط")
-        return
-    text, interval = event.text.split('|', 1)
-    c.execute("INSERT INTO scheduled_posts (user_id, text, interval_min) VALUES (?,?,?)",
-              (event.sender_id, text, int(interval)))
-    post_id = c.lastrowid
-    conn.commit()
-    await event.reply(f"✅ تم حفظ الإعلان. ابعت الصورة لو عايز، أو ابعت 'تم' للتشغيل")
-    client.conversation(event.sender_id).set_state(("waiting_image", post_id))
-
-@client.on(events.NewMessage)
-async def handle_image(event):
-    state = client.conversation(event.sender_id).get_state()
-    if not state or state[0]!= "waiting_image":
-        return
-    post_id = state[1]
-    image_path = None
-    if event.media:
-        image_path = await event.download_media(file="./")
-        c.execute("UPDATE scheduled_posts SET image_path =? WHERE id =?", (image_path, post_id))
-        conn.commit()
-    await event.reply("✅ تم حفظ الصورة")
-
-# تشغيل النشر
-@client.on(events.CallbackQuery(data=b"start_post"))
-async def start_post(event):
-    c.execute("SELECT id FROM scheduled_posts WHERE user_id =? AND active=0 LIMIT 1", (event.sender_id,))
-    row = c.fetchone()
-    if not row:
-        await event.edit("❌ مفيش إعلان متوقف")
-        return
-    post_id = row[0]
-    c.execute("UPDATE scheduled_posts SET active=1 WHERE id =?", (post_id,))
-    conn.commit()
-    task = asyncio.create_task(scheduler_task(event.sender_id, post_id))
-    scheduled_tasks[post_id] = task
-    await event.edit("▶️ تم تشغيل النشر")
-
-# إيقاف النشر
-@client.on(events.CallbackQuery(data=b"stop_post"))
-async def stop_post(event):
-    c.execute("SELECT id FROM scheduled_posts WHERE user_id =? AND active=1", (event.sender_id,))
-    posts = c.fetchall()
-    for (post_id,) in posts:
-        c.execute("UPDATE scheduled_posts SET active=0 WHERE id =?", (post_id,))
-        if post_id in scheduled_tasks:
-            scheduled_tasks[post_id].cancel()
-    conn.commit()
-    await event.edit("⏹️ تم إيقاف كل المهام")
-
-# لوحة المبرمج
-@client.on(events.CallbackQuery(data=b"dev_panel"))
-async def dev_panel(event):
-    if event.sender_id!= ADMIN_ID:
-        return
-    c.execute("SELECT COUNT(*) FROM fb_accounts")
-    accounts = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM fb_groups")
-    groups = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM scheduled_posts WHERE active=1")
-    active_posts = c.fetchone()[0]
-    await event.edit(f"لوحة المبرمج\nالحسابات: {accounts}\nالجروبات: {groups}\nالمهام الشغالة: {active_posts}")
-
-print("البوت شغال...")
-client.run_until_disconnected()

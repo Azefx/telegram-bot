@@ -1,2 +1,2 @@
-pyrogram
-tgcrypto
+telethon>=1.40.0
+fbchat>=2.0.0

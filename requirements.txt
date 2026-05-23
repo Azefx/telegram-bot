@@ -1,2 +1,2 @@
 telethon>=1.40.0
-fbchat-mqtt>=2.0.0
+fbchat-mqtt

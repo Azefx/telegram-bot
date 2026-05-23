@@ -4,9 +4,9 @@ import asyncio
 import os
 import re
 from datetime import datetime
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events
 from fbchat import Client
-from fbchat_mqtt.models import Message, ImageAttachment, ThreadType
+from fbchat.models import Message, ThreadType
 
 API_ID = 35380416
 API_HASH = "2f9ae5ae25a7f159fdba987c1e3f6a82"

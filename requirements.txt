@@ -1,1 +1,10 @@
-pyTelegramBotAPI==4.12.0
+python-telegram-bot==20.7
+sqlalchemy==2.0.31
+nsfw-detector==1.2.0
+transformers==4.42.4
+torch==2.3.1
+tensorflow==2.16.1
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+Flask==3.0.3
+gunicorn==23.0.0

@@ -1,0 +1,7 @@
+<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>Rayo Bot - الجروبات</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-gray-900 text-white"><nav class="bg-gray-800 p-4 flex justify-between"><h1 class="text-xl font-bold">🤖 Rayo Bot v6.0</h1>
+<div><a href="/" class="mx-2 hover:text-blue-400">الرئيسية</a><a href="/groups" class="mx-2 hover:text-blue-400">الجروبات</a><a href="/codes" class="mx-2 hover:text-blue-400">الأكواد</a><a href="/logout" class="mx-2 text-red-400">خروج</a></div></nav>
+<div class="container mx-auto p-6"><h1 class="text-2xl font-bold mb-6">كل الجروبات</h1><div class="bg-gray-800 p-6 rounded-lg overflow-x-auto">
+<table class="w-full"><thead><tr class="text-gray-400 text-right"><th class="p-3">الجروب ID</th><th class="p-3">الاسم</th><th class="p-3">الخطة</th><th class="p-3">الحالة</th><th class="p-3">ينتهي</th><th class="p-3">إجراءات</th></tr></thead><tbody>
+{% for g in groups %}<tr class="border-t border-gray-700"><td class="p-3 font-mono">{{ g.group_id }}</td><td class="p-3">{{ g.title or 'بدون اسم' }}</td>
+<td class="p-3

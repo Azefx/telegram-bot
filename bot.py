@@ -1,351 +1,392 @@
 import os
-import telebot
-import uuid
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import re
+import logging
+import asyncio
+import threading
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ForceReply
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, BigInteger
+from sqlalchemy.orm import declarative_base, sessionmaker
+from nsfw_detector import predict
+from transformers import pipeline
 
-# جلب توكن البوت بشكل آمن من إعدادات Railway
-BOT_TOKEN = os.environ.get('BOT_TOKEN', 'ضع_التوكن_هنا')
-bot = telebot.TeleBot(BOT_TOKEN)
+TOKEN = os.getenv("BOT_TOKEN")
+DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", 0))
+SUDO_USERS = [DEVELOPER_ID]
+BOT_VERSION = "6.0-PAID"
+BOT_USERNAME = os.getenv("BOT_USERNAME", "RayoProtectBot")
 
-# --- قاعدة بيانات برمجية ديناميكية في الذاكرة ---
-users_status = {}     # حالة تفعيل المشتركين (True/False)
-user_is_vip = {}      # تحديد رتبة المستخدم VIP أم عادي
-user_accounts = {}    # مصفوفة الحسابات اللانهائية
-user_campaigns = {}   # تفاصيل حملة النشر (نص، صورة، كلمة بحث، توقيت)
-temp_account_data = {} # تخزين الحساب مؤقتاً أثناء الإدخال خطوة بخطوة
-generated_keys = ["VIP-SUPER", "DEV-MASTER"]  # أكواد اشتراك افتراضية
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+Base = declarative_base()
+engine = create_engine(os.getenv("DATABASE_URL", "sqlite:///rayo_protect.db"))
+Session = sessionmaker(bind=engine)
 
-# إعدادات روابط المطور والقنوات
-DEVELOPER_URL = "https://t.me/devazf"
-CHANNEL_URL = "https://t.me/vip6705"
-ADMIN_ID = 8085768728  # ⚠️ استبدله بـ ID التليجرام الخاص بك لتفعيل لوحة الأدمن السرية
+RANKS = {0: "عضو", 1: "مميز", 2: "ادمن", 3: "مدير", 4: "منشئ", 5: "المالك", 6: "المطور"}
+PLANS = {
+    "monthly": {"name": "شهري", "days": 30, "price": 100},
+    "quarterly": {"name": "3 شهور", "days": 90, "price": 250},
+    "yearly": {"name": "سنوي", "days": 365, "price": 800}
+}
 
-def init_campaign(user_id):
-    if user_id not in user_campaigns:
-        user_campaigns[user_id] = {
-            "search_keyword": "القليوبيه",
-            "ad_text": "لم يتم تعيين نص الإعلان بعد.",
-            "ad_image": None,
-            "interval": "كل ساعة",
-            "is_publishing": False
-        }
-    if user_id not in user_accounts:
-        user_accounts[user_id] = [
-            {"email": "admin_test@mail.com", "pass": "123456", "status": "نشط ✅", "groups": ["جروب القليوبيه للتسويق", "سوق بنها المفتوح", "أهالي القليوبية اليوم"]}
-        ]
+AWAITING_USER_FOR_CREATOR, AWAITING_USER_FOR_ADMIN, AWAITING_USER_FOR_MOD, AWAITING_USER_FOR_SPECIAL = range(4)
+AWAITING_SUB_CODE = range(4, 5)
 
-def is_subscribed(user_id):
-    return users_status.get(user_id, False) or user_id == ADMIN_ID
+class Group(Base):
+    __tablename__ = 'groups'
+    id = Column(Integer, primary_key=True)
+    group_id = Column(BigInteger, unique=True)
+    title = Column(String)
+    expiry_date = Column(DateTime, default=None)
+    owner_id = Column(BigInteger, default=None)
+    is_active = Column(Boolean, default=False)
+    plan = Column(String, default=None)
+    antiflood = Column(Boolean, default=True)
+    anti_nsfw = Column(Boolean, default=True)
+    anti_links = Column(Boolean, default=True)
+    anti_arabic_spam = Column(Boolean, default=True)
+    anti_bots = Column(Boolean, default=True)
+    max_warnings = Column(Integer, default=3)
+    flood_limit = Column(Integer, default=5)
 
-# --- الأمر الرئيسي /start ---
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    user_id = message.from_user.id
-    init_campaign(user_id)
-    
-    if not is_subscribed(user_id):
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("👨‍💻 المبرمج لشراء كود", url=DEVELOPER_URL),
-            InlineKeyboardButton("📢 القناة الرسمية", url=CHANNEL_URL)
-        )
-        bot.send_message(
-            message.chat.id,
-            "⚠️ **مرحباً بك! هذا البوت مدفوع ومقفل برمجياً بكود اشتراك.**\n\nيرجى إرسال كود التفعيل الخاص بك الآن لفتح اللوحة، أو تواصل مع المبرمج لشراء كود جديد.",
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
+class UserRank(Base):
+    __tablename__ = 'ranks'
+    id = Column(Integer, primary_key=True)
+    group_id = Column(BigInteger)
+    user_id = Column(BigInteger)
+    rank = Column(Integer, default=0)
+
+class UserWarn(Base):
+    __tablename__ = 'warns'
+    id = Column(Integer, primary_key=True)
+    group_id = Column(BigInteger)
+    user_id = Column(BigInteger)
+    reason = Column(String)
+    date = Column(DateTime, default=datetime.now)
+
+class SubCode(Base):
+    __tablename__ = 'sub_codes'
+    id = Column(Integer, primary_key=True)
+    code = Column(String, unique=True)
+    plan = Column(String)
+    is_used = Column(Boolean, default=False)
+    used_by = Column(BigInteger, default=None)
+    created_at = Column(DateTime, default=datetime.now)
+
+Base.metadata.create_all(engine)
+
+logger.info("بحمل موديلات الذكاء الاصطناعي Local...")
+NSFW_MODEL = predict.load_model('mobilenet_v2_140_224')
+TEXT_CLASSIFIER = pipeline("text-classification", model="CAMeL-Lab/bert-base-arabic-camelbert-da-sentiment", device=-1)
+logger.info("الموديلات جاهزة ✅")
+
+BAD_WORDS = ['خول', 'شرموط', 'متناك', 'كسمك', 'احا', 'عرص', 'قحبة', 'زانية', 'fuck', 'bitch', 'porn', 'sex']
+
+def get_user_rank(group_id, user_id):
+    if user_id == DEVELOPER_ID: return 6
+    session = Session()
+    group = session.query(Group).filter_by(group_id=group_id).first()
+    if group and group.owner_id == user_id:
+        session.close()
+        return 5
+    user_rank = session.query(UserRank).filter_by(group_id=group_id, user_id=user_id).first()
+    session.close()
+    return user_rank.rank if user_rank else 0
+
+def set_user_rank(group_id, user_id, rank):
+    session = Session()
+    user_rank = session.query(UserRank).filter_by(group_id=group_id, user_id=user_id).first()
+    if not user_rank:
+        user_rank = UserRank(group_id=group_id, user_id=user_id, rank=rank)
+        session.add(user_rank)
     else:
-        show_main_menu(message.chat.id, user_id)
+        user_rank.rank = rank
+    session.commit()
+    session.close()
 
-# --- لوحة التحكم التفاعلية المرتبة بالكامل أونلاين ---
-def show_main_menu(chat_id, user_id):
-    markup = InlineKeyboardMarkup(row_width=2)
-    
-    # الصف الأول: إعدادات الإعلان والمحتوى
-    btn_search_word = InlineKeyboardButton("🔍 تحديد كلمة البحث", callback_data="set_search")
-    btn_ad_text = InlineKeyboardButton("📝 نص رسالة الإعلان", callback_data="set_ad_text")
-    btn_ad_image = InlineKeyboardButton("🖼️ إضافة صورة الإعلان", callback_data="set_ad_image")
-    btn_edit_schedule = InlineKeyboardButton("⏱️ تعيين الجدولة الزمنية", callback_data="edit_schedule")
-    
-    # الصف الثاني: التحكم بحالة النشر (تحت بعض أو بجانب بعض)
-    btn_toggle_on = InlineKeyboardButton("🟢 تشغيل النشر التلقائي", callback_data="start_pub")
-    btn_toggle_off = InlineKeyboardButton("🔴 تعطيل النشر الحالي", callback_data="stop_pub")
-    
-    # الصف الثالث: إدارة مصفوفة الحسابات
-    btn_add_acc = InlineKeyboardButton("➕ إضافة حساب جديد", callback_data="add_account")
-    btn_check_acc = InlineKeyboardButton("🔎 فحص الحسابات أونلاين", callback_data="check_accounts")
-    
-    # الصف الرابع: إدارة وقوائم المجموعات
-    btn_show_groups = InlineKeyboardButton("📁 عرض الجروبات المنضم فيها", callback_data="show_groups")
-    btn_del_all_groups = InlineKeyboardButton("🗑️ حذف كل الجروبات", callback_data="del_all_groups")
-    
-    # الصف الخامس: تسجيل خروج الحسابات وتصفيتها
-    btn_logout_spec = InlineKeyboardButton("❌ خروج حساب محدد", callback_data="logout_spec")
-    btn_logout_all = InlineKeyboardButton("🚨 خروج كل الحسابات", callback_data="logout_all")
-    
-    # الصف السادس: معلومات النظام والروابط الخارجية
-    btn_features = InlineKeyboardButton("💡 مميزات البوت", callback_data="bot_features")
-    btn_dev = InlineKeyboardButton("👨‍💻 المبرمج", url=DEVELOPER_URL)
-    btn_channel = InlineKeyboardButton("📢 القناة الرسمية", url=CHANNEL_URL)
-    
-    # إضافة الأزرار بترتيب وهندسة برمجية متناسقة ومريحة للعين
-    markup.add(btn_search_word, btn_ad_text)
-    markup.add(btn_ad_image, btn_edit_schedule)
-    markup.add(btn_toggle_on, btn_toggle_off)
-    markup.add(btn_add_acc, btn_check_acc)
-    markup.add(btn_show_groups, btn_del_all_groups)
-    markup.add(btn_logout_spec, btn_logout_all)
-    markup.add(btn_features)
-    markup.add(btn_dev, btn_channel)
-    
-    if user_id == ADMIN_ID:
-        markup.add(InlineKeyboardButton("👑 لوحة أدمن المطورين (تفعيل VIP)", callback_data="admin_panel"))
+def get_group(group_id):
+    session = Session()
+    group = session.query(Group).filter_by(group_id=group_id).first()
+    if not group:
+        group = Group(group_id=group_id)
+        session.add(group)
+        session.commit()
+    session.close()
+    return group
 
-    camp = user_campaigns[user_id]
-    status_emoji = "🟢 يعمل" if camp["is_publishing"] else "🔴 متوقف"
-    img_status = "✅ مضافة" if camp["ad_image"] else "❌ لا يوجد"
-    
-    info_text = (
-        f"🔥 **لوحة التحكم فائقة التطور v6.0**\n"
-        f"----------------------------------------\n"
-        f"🎯 **حالة النشر الحالية:** {status_emoji}\n"
-        f"🔍 **كلمة الفلترة المستهدفة:** `{camp['search_keyword']}`\n"
-        f"⏱️ **معدل الجدولة المحدد:** `{camp['interval']}`\n"
-        f"🖼️ **صورة الميديا المرفقة:** {img_status}\n"
-        f"💳 **نوع العضوية:** {'VIP المطور ⭐' if user_is_vip.get(user_id, False) else 'مستعمل عادي 👤'}\n"
-        f"📦 **المصفوفة اللانهائية:** تحتوي على `{len(user_accounts[user_id])}` حساب.\n"
-        f"----------------------------------------\n"
-        f"👇 تحكم بجميع عمليات الأتمتة المفلترة عبر الأزرار أدناه:"
-    )
-    bot.send_message(chat_id, info_text, reply_markup=markup, parse_mode="Markdown")
+def is_paid(group_id):
+    group = get_group(group_id)
+    return group.is_active and group.expiry_date and group.expiry_date > datetime.now()
 
-# ------------------------------------------------------------
-# 📡 الاستماع لضغطات الأزرار (Callback Queries)
-# ------------------------------------------------------------
-@bot.callback_query_handler(func=lambda call: True)
-def callback_listener(call):
-    user_id = call.from_user.id
-    chat_id = call.message.chat.id
-    init_campaign(user_id)
-    
-    if call.data == "set_search":
-        bot.answer_callback_query(call.id)
-        msg = bot.send_message(chat_id, "🔍 **تحديد كلمة البحث:**\nأرسل اسم أو كلمة البحث المراد جرد المجموعات بناءً عليها (مثال: القليوبيه):")
-        bot.register_next_step_handler(msg, process_search_keyword)
-        
-    elif call.data == "set_ad_text":
-        bot.answer_callback_query(call.id)
-        msg = bot.send_message(chat_id, "📝 **نص رسالة الإعلان:**\nأرسل نص الرسالة التسويقية الجديد لاعتماده في الجدولة:")
-        bot.register_next_step_handler(msg, process_ad_text)
-        
-    elif call.data == "set_ad_image":
-        bot.answer_callback_query(call.id)
-        msg = bot.send_message(chat_id, "🖼 shrink **إضافة صورة الإعلان:**\nقم برفع أو إرسال الصورة المراد إرفاقها مع حملتك:")
-        bot.register_next_step_handler(msg, process_ad_image)
-        
-    elif call.data == "edit_schedule":
-        bot.answer_callback_query(call.id)
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("⏱️ كل 10 دقائق", callback_data="time_10m"),
-            InlineKeyboardButton("⏱️ كل ساعة", callback_data="time_1h"),
-            InlineKeyboardButton("⏱️ كل 24 ساعة", callback_data="time_24h")
-        )
-        bot.send_message(chat_id, "⏱️ **تعديل الإعلان المجدول:**\nاختر الفاصل الزمني الجديد لإطلاق الحملة التلقائية:", reply_markup=markup)
-
-    elif call.data.startswith("time_"):
-        bot.answer_callback_query(call.id)
-        t_mapping = {"time_10m": "كل 10 دقائق", "time_1h": "كل ساعة", "time_24h": "كل 24 ساعة"}
-        user_campaigns[user_id]["interval"] = t_mapping[call.data]
-        bot.send_message(chat_id, f"✅ تم ضبط معدل التكرار بنجاح إلى: **{t_mapping[call.data]}**.")
-        show_main_menu(chat_id, user_id)
-
-    elif call.data == "start_pub":
-        bot.answer_callback_query(call.id)
-        camp = user_campaigns[user_id]
-        accs = user_accounts[user_id]
-        
-        if not accs:
-            bot.send_message(chat_id, "❌ مصفوفة الحسابات فارغة تماماً! يرجى إضافة حساب أولاً.")
-            return
-            
-        camp["is_publishing"] = True
-        bot.send_message(chat_id, "🟢 **تم تفعيل حملة النشر التلقائي أونلاين!**\n📡 السيرفر يقوم الآن بفحص المجموعات المشترك بها وتصفيتها لإطلاق المنشورات المجدولة دورياً.")
-        
-        for acc in accs:
-            filtered = [g for g in acc["groups"] if camp["search_keyword"] in g]
-            if filtered:
-                bot.send_message(chat_id, f"📊 الحساب `{acc['email']}` يمتلك {len(filtered)} جروب يطابق كلمة البحث. جاري الإرسال...")
-                for fg in filtered:
-                    if camp["ad_image"]:
-                        bot.send_photo(chat_id, camp["ad_image"], caption=f"📢 **تم النشر في: {fg}**\n\n{camp['ad_text']}")
-                    else:
-                        bot.send_message(chat_id, f"📢 **تم النشر في: {fg}**\n\n{camp['ad_text']}")
-        show_main_menu(chat_id, user_id)
-                        
-    elif call.data == "stop_pub":
-        bot.answer_callback_query(call.id)
-        user_campaigns[user_id]["is_publishing"] = False
-        bot.send_message(chat_id, "🔴 **تعطيل النشر الحالي:** تم إيقاف كافة مهام النشر والجدولة بنجاح.")
-        show_main_menu(chat_id, user_id)
-
-    elif call.data == "add_account":
-        bot.answer_callback_query(call.id)
-        msg = bot.send_message(chat_id, "➕ **[الخطوة 1/2]:**\nيرجى إرسال **البريد الإلكتروني** أو **رقم الهاتف** للحساب الجديد:")
-        bot.register_next_step_handler(msg, process_step_username)
-        
-    elif call.data == "check_accounts":
-        bot.answer_callback_query(call.id)
-        text_status = "🔍 **فحص الحسابات أونلاين:**\n\n"
-        for idx, acc in enumerate(user_accounts[user_id]):
-            text_status += f"{idx+1}️⃣ الحساب: `{acc['email']}` -> الحالة: {acc['status']}\n"
-        bot.send_message(chat_id, text_status, parse_mode="Markdown")
-        
-    elif call.data == "show_groups":
-        bot.answer_callback_query(call.id)
-        text_groups = "📁 **المجموعات المنضم إليها حالياً:**\n\n"
-        for acc in user_accounts[user_id]:
-            text_groups += f"👤 الحساب: `{acc['email']}`\n"
-            for idx, g in enumerate(acc["groups"]):
-                text_groups += f"   🔹 {idx+1}. {g}\n"
-        bot.send_message(chat_id, text_groups, parse_mode="Markdown")
-        
-    elif call.data == "del_all_groups":
-        bot.answer_callback_query(call.id)
-        for acc in user_accounts[user_id]:
-            acc["groups"] = []
-        bot.send_message(chat_id, "🗑️ **حذف كل الجروبات:** تم تفريغ وإخلاء قوائم المجموعات بالكامل.")
-        show_main_menu(chat_id, user_id)
-        
-    elif call.data == "logout_spec":
-        bot.answer_callback_query(call.id)
-        if len(user_accounts[user_id]) > 0:
-            removed = user_accounts[user_id].pop(0)
-            bot.send_message(chat_id, f"❌ **خروج حساب محدد:** تم تسجيل خروج وإزالة الحساب: `{removed['email']}`")
-        else:
-            bot.send_message(chat_id, "⚠️ مصفوفة الحسابات فارغة بالفعل.")
-        show_main_menu(chat_id, user_id)
-            
-    elif call.data == "logout_all":
-        bot.answer_callback_query(call.id)
-        user_accounts[user_id] = []
-        bot.send_message(chat_id, "🚨 **خروج كل الحسابات:** تم حذف كافة الجلسات المفتوحة والمصفوفة فارغة تماماً.")
-        show_main_menu(chat_id, user_id)
-
-    elif call.data == "bot_features":
-        bot.answer_callback_query(call.id)
-        features_text = (
-            "💡 **مميزات البوت الاحترافي المتطور:**\n\n"
-            "• **واجهة منظمة وخالية من الزوائد**: تم إزالة العناوين المكررة وترتيب المصفوفة لسهولة التحكم.\n"
-            "• **إضافة خطوة بخطوة**: استقبال اسم الحساب ثم كلمة المرور بشكل مستقل تماماً.\n"
-            "• **أتمتة الفلترة بالاسم**: فرز الجروبات وضخ المنشورات في المجموعات المعنية تلقائياً.\n"
-            "• **نظام الأكواد المشفرة**: قفل كامل للبوت بنظام اشتراك آمن يتم التحكم به من المطور الرئيسي."
-        )
-        bot.send_message(chat_id, features_text, parse_mode="Markdown")
-
-    elif call.data == "admin_panel":
-        bot.answer_callback_query(call.id)
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("🎫 توليد كود اشتراك جديد", callback_data="gen_new_key"),
-            InlineKeyboardButton("⭐ تفعيل وضع VIP لمستخدم", callback_data="adm_vip_on"),
-            InlineKeyboardButton("❌ تعطيل وضع VIP لمستخدم", callback_data="adm_vip_off")
-        )
-        bot.send_message(chat_id, "👑 **لوحة إدارة المطور العليا:**\nيمكنك التحكم بالتراخيص وتوليد مفاتيح التفعيل أونلاين:", reply_markup=markup)
-
-    elif call.data == "gen_new_key":
-        bot.answer_callback_query(call.id)
-        new_key = f"VIP-{str(uuid.uuid4())[:8].upper()}"
-        generated_keys.append(new_key)
-        bot.send_message(chat_id, f"🎫 **تم توليد مفتاح ترخيص مدفوع جديد:**\n\n`{new_key}`\n\nقم بنسخه وإعطائه للعميل لتفعيل اشتراكه الخاص.", parse_mode="Markdown")
-
-    elif call.data in ["adm_vip_on", "adm_vip_off"]:
-        bot.answer_callback_query(call.id)
-        status_to_set = True if call.data == "adm_vip_on" else False
-        msg = bot.send_message(chat_id, "👤 أرسل الآن رقم الـ (User ID) الخاص بالمستهدف لتعديل رتبته برمجياً:")
-        bot.register_next_step_handler(msg, lambda m: process_vip_toggle(m, status_to_set))
-
-# ------------------------------------------------------------
-# ⚙️ الدوال المساعدة لمعالجة الخطوات المتتالية
-# ------------------------------------------------------------
-
-def process_step_username(message):
-    user_id = message.from_user.id
-    username_input = message.text.strip()
-    temp_account_data[user_id] = {"email": username_input}
-    msg = bot.send_message(message.chat.id, f"🔑 **[الخطوة 2/2]:**\nتم استقبال الحساب: `{username_input}`\n\nالآن أرسل **كلمة السر (Password)** الخاصة به لربط الجلسة:")
-    bot.register_next_step_handler(msg, process_step_password)
-
-def process_step_password(message):
-    user_id = message.from_user.id
-    password_input = message.text.strip()
-    
-    if user_id in temp_account_data:
-        email_data = temp_account_data[user_id]["email"]
-        user_accounts[user_id].append({
-            "email": email_data, 
-            "pass": password_input, 
-            "status": "نشط ✅",
-            "groups": ["جروب القليوبيه لخدمات الإعلانات", "بيع وشراء بنها وطوخ", "سوق القليوبية المفتوح"]
-        })
-        del temp_account_data[user_id]
-        bot.send_message(message.chat.id, f"✅ **تمت الإضافة بنجاح!**\nتم حفظ وتأمين الحساب `{email_data}` داخل المصفوفة اللانهائية للبوت بنجاح.")
-    else:
-        bot.send_message(message.chat.id, "❌ حدث خطأ في التدفق الزمني للبيانات، يرجى المحاولة مجدداً.")
-    show_main_menu(message.chat.id, user_id)
-
-def process_search_keyword(message):
-    user_id = message.from_user.id
-    user_campaigns[user_id]["search_keyword"] = message.text
-    bot.send_message(message.chat.id, f"✅ تم تحديث الكلمة المفتاحية للفلترة إلى: **{message.text}**")
-    show_main_menu(message.chat.id, user_id)
-
-def process_ad_text(message):
-    user_id = message.from_user.id
-    user_campaigns[user_id]["ad_text"] = message.text
-    bot.send_message(message.chat.id, "✅ تم تعديل وحفظ نص الإعلان المجدول بنجاح!")
-    show_main_menu(message.chat.id, user_id)
-
-def process_ad_image(message):
-    user_id = message.from_user.id
-    if message.photo:
-        file_id = message.photo[-1].file_id
-        user_campaigns[user_id]["ad_image"] = file_id
-        bot.send_message(message.chat.id, "✅ تم استقبال الصورة واعتمادها لدعم ميديا الإعلان بنجاح!")
-    else:
-        bot.send_message(message.chat.id, "⚠️ لم تقم بإرسال ميديا صالحة. تم إلغاء العملية.")
-    show_main_menu(message.chat.id, user_id)
-
-def process_vip_toggle(message, status):
+def is_nsfw_local(image_path):
     try:
-        target_id = int(message.text.strip())
-        user_is_vip[target_id] = status
-        mode_text = "تفعيل VIP ✅" if status else "تعطيل VIP ❌"
-        bot.send_message(message.chat.id, f"👑 تم تطبيق رتبة [{mode_text}] للمعرف `{target_id}` بنجاح.")
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ يرجى إدخال أرقام المعرف بشكل صحيح.")
+        result = predict.classify(NSFW_MODEL, image_path)
+        nsfw_score = result[image_path]['porn'] + result[image_path]['hentai'] + result[image_path]['sexy']
+        return nsfw_score > 0.65
+    except: return False
 
-# --- استقبال رسائل كود التفعيل عند التثبيت لأول مرة ---
-@bot.message_handler(func=lambda message: True)
-def handle_activation_keys(message):
-    user_id = message.from_user.id
-    text = message.text.strip()
-    
-    if not is_subscribed(user_id):
-        if text in generated_keys:
-            users_status[user_id] = True
-            generated_keys.remove(text)  # إبطال الكود لضمان استخدامه مرة واحدة فقط (تجاري)
-            bot.send_message(message.chat.id, "🎉 **تهانينا! تم التحقق من ترخيص الاشتراك وتفعيل البوت بالكامل أونلاين.**")
-            init_campaign(user_id)
-            show_main_menu(message.chat.id, user_id)
-        else:
-            bot.send_message(message.chat.id, "❌ مفتاح الترخيص غير صحيح! تواصل مع المطور لشراء كود تفعيل صالح.")
+def is_bad_text_ai(text):
+    try:
+        result = TEXT_CLASSIFIER(text[:512])[0]
+        has_bad_word = any(word in text for word in BAD_WORDS)
+        return result['label'] == 'negative' and result['score'] > 0.85 and has_bad_word
+    except: return False
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private':
+        keyboard = [[InlineKeyboardButton("➕ اضفني لجروبك", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")]]
+        await update.message.reply_text(
+            f"🤖 أهلاً بيك في بوت حماية Rayo v{BOT_VERSION}\n\n"
+            "البوت مدفوع باشتراك شهري من المطور.\n"
+            "للاشتراك كلمني: @YourUsername\n\n"
+            "الأسعار:\n"
+            f"• شهري: {PLANS['monthly']['price']} جنيه\n"
+            f"• 3 شهور: {PLANS['quarterly']['price']} جنيه\n"
+            f"• سنوي: {PLANS['yearly']['price']} جنيه",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     else:
-        bot.send_message(message.chat.id, "📥 تم استلام النص. يرجى استخدام أزرار لوحة التحكم التفاعلية لتوجيه الأوامر.")
+        group = get_group(update.effective_chat.id)
+        if not group.is_active:
+            await update.message.reply_text("❌ الجروب غير مفعل. اطلب كود تفعيل من المطور @YourUsername")
+        else:
+            await cmd_commands(update, context)
 
-if __name__ == "__main__":
-    print("🚀 Bot is running online smoothly...")
-    bot.infinity_polling()
+async def cmd_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not is_paid(chat_id) and update.effective_user.id!= DEVELOPER_ID:
+        return await update.message.reply_text("❌ الجروب غير مفعل. استخدم /activate لتفعيل الاشتراك")
 
-        
+    keyboard = [
+        [InlineKeyboardButton("• 1 •", callback_data="menu_1"), InlineKeyboardButton("• 2 •", callback_data="menu_2")],
+        [InlineKeyboardButton("• 3 •", callback_data="menu_3")],
+        [InlineKeyboardButton("• 4 •", callback_data="menu_4"), InlineKeyboardButton("• 5 •", callback_data="menu_5")],
+        [InlineKeyboardButton("• 6 •", callback_data="menu_6")]
+    ]
+    group = get_group(chat_id)
+    days_left = (group.expiry_date - datetime.now()).days if group.expiry_date else 0
+    text = f"""
+بوت حمايه Rayo 🤖
+
+حالة الاشتراك: مفعل ✅
+الخطة: {PLANS[group.plan]['name'] if group.plan else 'غير محدد'}
+متبقي: {days_left} يوم
+
+اليك اوامر البوت {BOT_VERSION} : -
+
+- اوامر الحمايه ⌯ [ 1م ] : -
+- اوامر المشرفين ⌯ [ 2م ] : -
+- اوامر الرتب ⌯ [ 3م ] : -
+- اوامر التفعيلات ⌯ [ 4م ] : -
+- اوامر المسح ⌯ [ 5م ] : -
+- اوامر المطورين ⌯ [ 6م ] : -
+"""
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = query.message.chat_id
+    user_id = query.from_user.id
+    user_rank = get_user_rank(chat_id, user_id)
+
+    if not is_paid(chat_id) and user_id!= DEVELOPER_ID:
+        return await query.answer("الجروب غير مفعل", show_alert=True)
+
+    if query.data == "menu_1":
+        if user_rank < 2: return await query.answer("للادمن فما فوق", show_alert=True)
+        group = get_group(chat_id)
+        status = lambda x: '✅' if x else '❌'
+        text = f"""⚙️ اوامر الحمايه - [ 1م ] | رتبتك: {RANKS[user_rank]}
+
+1. قفل التكرار: {status(group.antiflood)} - /flood
+2. قفل الروابط: {status(group.anti_links)} - /antilink
+3. قفل الصور الإباحية: {status(group.anti_nsfw)} - /antinsfw
+4. قفل الشتائم: {status(group.anti_arabic_spam)} - /antispam
+5. قفل البوتات: {status(group.anti_bots)} - /antibots
+6. وضع الطوارئ: /emergency
+"""
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="main_menu")]]))
+
+    elif query.data == "menu_3":
+        if user_rank < 3: return await query.answer("للمدير فما فوق", show_alert=True)
+        keyboard = [
+            [InlineKeyboardButton("رفع منشئ", callback_data="promote_creator")],
+            [InlineKeyboardButton("رفع مدير", callback_data="promote_admin")],
+            [InlineKeyboardButton("رفع ادمن", callback_data="promote_mod")],
+            [InlineKeyboardButton("رفع مميز", callback_data="promote_special")],
+            [InlineKeyboardButton("تنزيل عضو", callback_data="demote_user")],
+            [InlineKeyboardButton("رجوع", callback_data="main_menu")]
+        ]
+        text = f"""🎖️ اوامر الرتب - [ 3م ] | رتبتك: {RANKS[user_rank]}
+
+دوس على الزر وارسل يوزر العضو أو اعمل ربلاي عليه
+"""
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == "main_menu":
+        await cmd_commands(query, context)
+
+async def start_promote(update: Update, context: ContextTypes.DEFAULT_TYPE, rank, rank_name, next_state):
+    query = update.callback_query
+    await query.answer()
+    chat_id = query.message.chat_id
+    user_rank = get_user_rank(chat_id, query.from_user.id)
+
+    if user_rank <= rank and user_rank!= 6:
+        return await query.edit_message_text("❌ ماتقدرش ترفع لرتبة أعلى منك أو زيك")
+
+    await query.edit_message_text(f"📤 ارسل الآن @يوزر العضو أو اعمل ربلاي عليه لرفعه {rank_name}", reply_markup=ForceReply(selective=True))
+    context.user_data['rank_to_set'] = rank
+    context.user_data['rank_name'] = rank_name
+    context.user_data['chat_id'] = chat_id
+    return next_state
+
+async def promote_creator_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await start_promote(update, context, 4, "منشئ", AWAITING_USER_FOR_CREATOR)
+
+async def promote_admin_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await start_promote(update, context, 3, "مدير", AWAITING_USER_FOR_ADMIN)
+
+async def promote_mod_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await start_promote(update, context, 2, "ادمن", AWAITING_USER_FOR_MOD)
+
+async def receive_user_to_promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data['chat_id']
+    rank = context.user_data['rank_to_set']
+    rank_name = context.user_data['rank_name']
+    target_user = None
+
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+    elif update.message.text.startswith('@'):
+        try:
+            target_user = await context.bot.get_chat(update.message.text)
+        except:
+            return await update.message.reply_text("❌ اليوزر مش موجود")
+    elif update.message.text.isdigit():
+        try:
+            target_user = await context.bot.get_chat_member(chat_id, int(update.message.text))
+            target_user = target_user.user
+        except:
+            return await update.message.reply_text("❌ الأيدي مش في الجروب")
+    else:
+        return await update.message.reply_text("❌ ابعت @يوزر أو اعمل ربلاي")
+
+    set_user_rank(chat_id, target_user.id, rank)
+    await update.message.reply_text(f"✅ تم رفع {target_user.mention_html()} إلى {rank_name}", parse_mode='HTML')
+    return ConversationHandler.END
+
+async def cmd_gensub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= DEVELOPER_ID: return
+    if not context.args or context.args[0] not in PLANS:
+        return await update.message.reply_text("استخدام: /gensub [monthly/quarterly/yearly]")
+    plan = context.args[0]
+    import random, string
+    code = f"RAYO-{plan.upper()}-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    session = Session()
+    new_code = SubCode(code=code, plan=plan)
+    session.add(new_code)
+    session.commit()
+    session.close()
+    await update.message.reply_text(f"✅ كود تفعيل جديد:\n\n`{code}`\n\nالخطة: {PLANS['name']}\nالسعر: {PLANS['price']} جنيه", parse_mode='Markdown')
+
+async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private':
+        return await update.message.reply_text("الأمر ده في الجروب بس")
+    await update.message.reply_text("📤 ارسل كود التفعيل اللي اشتريته من المطور", reply_markup=ForceReply(selective=True))
+    return AWAITING_SUB_CODE
+
+async def receive_sub_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code = update.message.text.strip().upper()
+    chat_id = update.effective_chat.id
+    session = Session()
+    sub_code = session.query(SubCode).filter_by(code=code, is_used=False).first()
+    if not sub_code:
+        session.close()
+        return await update.message.reply_text("❌ الكود غلط أو مستخدم قبل كده")
+
+    group = session.query(Group).filter_by(group_id=chat_id).first()
+    group.is_active = True
+    group.expiry_date = datetime.now() + timedelta(days=PLANS[sub_code.plan]['days'])
+    group.plan = sub_code.plan
+    group.owner_id = update.effective_user.id
+    sub_code.is_used = True
+    sub_code.used_by = chat_id
+    session.commit()
+    session.close()
+    await update.message.reply_text(f"✅ تم تفعيل البوت بنجاح!\nالخطة: {PLANS[sub_code.plan]['name']}\nالمدة: {PLANS[sub_code.plan]['days']} يوم\n\nاستخدم /اوامر لعرض القائمة")
+    return ConversationHandler.END
+
+async def cancel_convo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("تم الإلغاء")
+    return ConversationHandler.END
+
+async def message_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or update.effective_chat.type == 'private': return
+    chat_id, user_id = update.effective_chat.id, update.effective_user.id
+    if not is_paid(chat_id) and user_id!= DEVELOPER_ID: return
+    if get_user_rank(chat_id, user_id) >= 1: return
+    group = get_group(chat_id)
+    if group.anti_arabic_spam and update.message.text and is_bad_text_ai(update.message.text):
+        await update.message.delete()
+        return
+    if group.anti_links and update.message.entities:
+        if any(e.type in ['url', 'text_link'] for e in update.message.entities):
+            await update.message.delete()
+            return
+    if group.anti_nsfw and update.message.photo:
+        file = await update.message.photo[-1].get_file()
+        path = f"temp_{file.file_id}.jpg"
+        await file.download_to_drive(path)
+        if is_nsfw_local(path):
+            os.remove(path)
+            await update.message.delete()
+            return
+        os.remove(path)
+
+async def new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for member in update.message.new_chat_members:
+        if member.id == context.bot.id:
+            await update.message.reply_text("شكراً لإضافتي! البوت محتاج تفعيل من المطور.\nاطلب كود تفعيل من @YourUsername وبعدين استخدم /activate")
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    promote_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(promote_creator_btn, pattern="^promote_creator$"),
+            CallbackQueryHandler(promote_admin_btn, pattern="^promote_admin$"),
+            CallbackQueryHandler(promote_mod_btn, pattern="^promote_mod$"),
+        ],
+        states={
+            AWAITING_USER_FOR_CREATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_to_promote)],
+            AWAITING_USER_FOR_ADMIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_to_promote)],
+            AWAITING_USER_FOR_MOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_to_promote)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_convo)],
+    )
+    activate_conv = ConversationHandler(
+        entry_points=[CommandHandler("activate", cmd_activate)],
+        states={AWAITING_SUB_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sub_code)]},
+        fallbacks=[CommandHandler("cancel", cancel_convo)],
+    )
+    app.add_handler(CommandHandler(["start", "اوامر", "الاوامر"], cmd_commands))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(promote_conv)
+    app.add_handler(activate_conv)
+    app.add_handler(CommandHandler("gensub", cmd_gensub))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_filter))
+    logger.info(f"Rayo Bot v{BOT_VERSION} - PAID - Running...")
+    app.run_polling()
+
+if __name__ == '__main__':
+    from web import app as flask_app
+    import threading
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    main()

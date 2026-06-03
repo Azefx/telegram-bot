@@ -1,10 +1,10 @@
-python-telegram-bot==20.7
+python-telegram-bot==21.6
 sqlalchemy==2.0.31
 nsfw-detector==1.2.0
-transformers==4.42.4
-torch==2.3.1
-tensorflow==2.16.1
-opencv-python-headless==4.10.0.84
+transformers==4.41.2
+torch==2.2
+tensorflow-cpu==2.16.1
+opencv-python-headless==4.9.0.80
 numpy==1.26.4
 Flask==3.0.3
 gunicorn==23.0.0

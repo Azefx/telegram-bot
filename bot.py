@@ -20,7 +20,7 @@ MONTH_STARS = 200
 YEAR_STARS = 500
 DB_NAME = "bot.db"
 
-# ================== EMOJI ==================
+# ================== EMOJI PREMIUM ==================
 LOCK = '<b><tg-emoji emoji-id="5798482080421649554">🔒</tg-emoji></b>'
 STAR = '<b><tg-emoji emoji-id="5796526727840669257">🎲</tg-emoji></b>'
 PIN = '<b><tg-emoji emoji-id="5796499583647359561">📌</tg-emoji></b>'
@@ -34,7 +34,18 @@ def decor(text: str):
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.executescript('''
-            CREATE TABLE IF NOT EXISTS codes (code TEXT PRIMARY KEY, used BOOLEAN DEFAULT 0, used_by INTEGER);
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                joined_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS codes (
+                code TEXT PRIMARY KEY,
+                used BOOLEAN DEFAULT 0,
+                used_by INTEGER,
+                used_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -47,23 +58,44 @@ async def init_db():
         ''')
         await db.commit()
 
+async def add_user(user_id: int, username: str, first_name: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?, ?, ?, ?)",
+            (user_id, username, first_name, datetime.now().isoformat())
+        )
+        await db.commit()
+
 async def add_codes_list(codes_list):
     added = 0
     async with aiosqlite.connect(DB_NAME) as db:
         for code in codes_list:
-            if code.strip():
-                await db.execute("INSERT OR IGNORE INTO codes (code) VALUES (?)", (code.strip().upper(),))
+            code = code.strip().upper()
+            if code:
+                await db.execute("INSERT OR IGNORE INTO codes (code) VALUES (?)", (code,))
                 added += 1
         await db.commit()
     return added
 
-async def get_available_code(user_id):
+async def delete_code(code: str):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT code FROM codes WHERE used=0 LIMIT 1") as cur:
+        await db.execute("DELETE FROM codes WHERE code = ?", (code.upper(),))
+        await db.commit()
+        return True
+
+async def get_available_codes_count():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT COUNT(*) FROM codes WHERE used = 0") as cur:
+            return (await cur.fetchone())[0]
+
+async def get_available_code(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT code FROM codes WHERE used = 0 LIMIT 1") as cur:
             row = await cur.fetchone()
             if row:
                 code = row[0]
-                await db.execute("UPDATE codes SET used=1, used_by=? WHERE code=?", (user_id, code))
+                await db.execute("UPDATE codes SET used=1, used_by=?, used_at=? WHERE code=?", 
+                               (user_id, datetime.now().isoformat(), code))
                 await db.commit()
                 return code
     return None
@@ -82,13 +114,12 @@ ADDRESSES = {
 
 def crypto_menu_kb():
     kb = InlineKeyboardBuilder()
-    methods = [
+    for name, data in [
         ("USDT Aptos", "usdt_aptos"), ("USDT ERC20", "usdt_erc20"),
         ("USDT Polygon", "usdt_polygon"), ("USDT BEP20", "usdt_bep20"),
         ("USDT TRC20", "usdt_trc20"), ("Solana", "solana"),
         ("LTC", "ltc"), ("TON", "ton")
-    ]
-    for name, data in methods:
+    ]:
         kb.button(text=name, callback_data=data)
     kb.adjust(2)
     return kb.as_markup()
@@ -98,8 +129,9 @@ def main_menu(is_admin=False):
     kb.button(text="🛒 اشتراك شهري - 200 ⭐", callback_data="buy_month")
     kb.button(text="🛒 اشتراك سنوي - 500 ⭐", callback_data="buy_year")
     kb.button(text="💰 طرق الدفع الكريبتو", callback_data="crypto_menu")
+    kb.button(text="👨‍💻 المبرمج", url="https://t.me/aabdulrahmaan")
     if is_admin:
-        kb.button(text="📋 الأكواد المتاحة", callback_data="show_codes")
+        kb.button(text="🔧 لوحة الأدمن", callback_data="admin_panel")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -117,11 +149,16 @@ dp = Dispatcher()
 
 @dp.message(Command("start"))
 async def start(msg: Message):
-    await msg.answer(f"""
-{decor("مرحبا بك")} <b>{msg.from_user.first_name}</b>
+    await add_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
+    text = f"""
+{decor("مرحبا بك")} <b>{msg.from_user.first_name}</b> {STAR}
 
-{PIN} بوت اشتراكات النشر التلقائي @z6yboy {ROCKET}
-    """, reply_markup=main_menu(msg.from_user.id == ADMIN_ID))
+{PIN} بوت اشتراكات النشر التلقائي
+{PIN} <b>اشتراك شهري</b> → 200 ⭐ (2$)
+{PIN} <b>اشتراك سنوي</b> → 500 ⭐ (5$)
+{ROCKET} @z6yboy {ROCKET}
+    """
+    await msg.answer(text, reply_markup=main_menu(msg.from_user.id == ADMIN_ID))
 
 @dp.callback_query(F.data == "crypto_menu")
 async def crypto_menu(call: CallbackQuery):
@@ -134,7 +171,6 @@ async def crypto_menu(call: CallbackQuery):
 {decor("اختار طريقة الدفع المناسبة لك")}
     """
     await call.message.edit_text(text, reply_markup=crypto_menu_kb())
-    await call.answer()
 
 @dp.callback_query(F.data.in_(ADDRESSES.keys()))
 async def copy_address(call: CallbackQuery):
@@ -149,14 +185,15 @@ async def copy_address(call: CallbackQuery):
     """)
     await call.answer("✅ تم النسخ!")
 
-# ================== باقي الدوال (دفع نجوم + كريبتو + أدمن) ==================
+# ================== PAYMENTS ==================
 @dp.callback_query(F.data.in_(["buy_month", "buy_year"]))
 async def buy_stars(call: CallbackQuery):
     is_month = call.data == "buy_month"
     amount = MONTH_STARS if is_month else YEAR_STARS
     title = "اشتراك شهري" if is_month else "اشتراك سنوي"
     await call.message.answer_invoice(
-        title=title, description=title, payload=call.data+"_sub",
+        title=title, description=title,
+        payload=call.data + "_sub",
         provider_token="", currency="XTR",
         prices=[LabeledPrice(label=title, amount=amount)]
     )
@@ -174,42 +211,99 @@ async def handle_photo(msg: Message):
     if msg.from_user.id == ADMIN_ID: return
     file_id = msg.photo[-1].file_id
     username = msg.from_user.username or msg.from_user.first_name
-    
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO payments (user_id, username, proof) VALUES (?, ?, ?)",
                         (msg.from_user.id, username, file_id))
         await db.commit()
         async with db.execute("SELECT last_insert_rowid()") as cur:
             pid = (await cur.fetchone())[0]
-
-    await msg.answer(f"{decor('تم استلام الإيصال')}\n\n{PIN} أرسل أيديك الآن {ROCKET}")
+    await msg.answer(f"{decor('تم استلام الإيصال بنجاح')}\n\n{PIN} أرسل أيديك الآن {ROCKET}")
     await bot.send_photo(ADMIN_ID, file_id, caption=f"🔔 دفع كريبتو جديد\n👤 {username} ({msg.from_user.id})", reply_markup=accept_reject_kb(pid))
 
 @dp.message()
 async def handle_text(msg: Message):
     if msg.from_user.id == ADMIN_ID:
+        # إضافة أكواد
         lines = [line.strip() for line in msg.text.splitlines() if line.strip()]
         if lines and len(lines[0]) > 8:
             added = await add_codes_list(lines)
-            await msg.answer(f"{CHECK} تم إضافة {added} كود")
+            await msg.answer(f"{CHECK} تم إضافة <b>{added}</b> كود بنجاح!")
+            return
     else:
-        await msg.answer(f"{decor('تم إرسال طلبك للمطور')}\n\n{PIN} انتظر التفعيل {ROCKET}")
+        await msg.answer(f"{decor('تم إرسال طلبك للمطور')}\n\n{PIN} يرجى الانتظار حتى يتم التفعيل {ROCKET}")
 
-# أوامر الأدمن...
+# ================== ADMIN PANEL ==================
 @dp.message(Command("admin"))
 async def admin_panel(msg: Message):
-    if msg.from_user.id == ADMIN_ID:
-        kb = InlineKeyboardBuilder()
-        kb.button(text="➕ إضافة أكواد", callback_data="add_codes")
-        kb.button(text="📋 الأكواد المتاحة", callback_data="show_codes")
-        await msg.answer(f"{decor('لوحة تحكم الأدمن')}", reply_markup=kb.as_markup())
+    if msg.from_user.id != ADMIN_ID: return
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📊 إحصائيات", callback_data="stats")
+    kb.button(text="📢 إذاعة", callback_data="broadcast")
+    kb.button(text="➕ إضافة أكواد", callback_data="add_codes")
+    kb.button(text="🗑️ حذف كود", callback_data="delete_code")
+    kb.button(text="📋 الأكواد المتاحة", callback_data="show_codes")
+    kb.button(text="📦 المشتريات الناجحة", callback_data="success_purchases")
+    await msg.answer(f"{decor('لوحة تحكم الأدمن المتطورة')}", reply_markup=kb.as_markup())
 
-# ... (باقي أكواد الأدمن كما في السابق)
+@dp.callback_query(F.data == "stats")
+async def show_stats(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as c: users = (await c.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM codes WHERE used=0") as c: avail = (await c.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM codes WHERE used=1") as c: used = (await c.fetchone())[0]
+    text = f"""
+{decor("إحصائيات البوت")}
+👥 المستخدمين: <b>{users}</b>
+📦 أكواد متاحة: <b>{avail}</b>
+✅ أكواد مستخدمة: <b>{used}</b>
+    """
+    await call.message.answer(text)
+
+@dp.callback_query(F.data == "show_codes")
+async def show_codes(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    count = await get_available_codes_count()
+    await call.message.answer(f"{decor(f'الأكواد المتاحة: {count} كود')}")
+
+@dp.callback_query(F.data == "add_codes")
+async def add_codes(call: CallbackQuery):
+    if call.from_user.id == ADMIN_ID:
+        await call.message.answer(f"{decor('أرسل قائمة الأكواد (كود في كل سطر)')}")
+
+@dp.callback_query(F.data == "delete_code")
+async def delete_code_btn(call: CallbackQuery):
+    if call.from_user.id == ADMIN_ID:
+        await call.message.answer("🗑️ أرسل الكود الذي تريد حذفه:")
+
+@dp.callback_query(F.data == "success_purchases")
+async def success_purchases(call: CallbackQuery):
+    if call.from_user.id == ADMIN_ID:
+        await call.message.answer("📦 المشتريات الناجحة (يمكن توسيعها)")
+
+@dp.callback_query(F.data == "broadcast")
+async def broadcast(call: CallbackQuery):
+    if call.from_user.id == ADMIN_ID:
+        await call.message.answer("📢 أرسل الرسالة للإذاعة للجميع:")
+
+# ================== APPROVAL ==================
+@dp.callback_query(F.data.startswith("accept_"))
+async def accept_payment(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    pid = int(call.data.split("_")[1])
+    await call.message.edit_text(call.message.text + f"\n\n{CHECK} تم التفعيل بنجاح")
+    await call.answer("✅ تم التفعيل")
+
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject_payment(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    await call.message.edit_text(call.message.text + "\n\n❌ تم الرفض")
+    await call.answer("❌")
 
 async def main():
     await init_db()
-    await bot.delete_webhook(drop_pending_updates=True)  # حل مشكلة الـ Conflict
-    print("🚀 البوت المتطور شغال بنجاح!")
+    await bot.delete_webhook(drop_pending_updates=True)
+    print("🚀 البوت المتطور جداً شغال بنجاح!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

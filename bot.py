@@ -122,7 +122,7 @@ def main_menu(is_admin=False):
     kb.button(text="🛒 اشتراك شهري - 200 ⭐", callback_data="buy_month")
     kb.button(text="🛒 اشتراك سنوي - 500 ⭐", callback_data="buy_year")
     kb.button(text="💰 طرق الدفع الكريبتو", callback_data="crypto_menu")
-    kb.button(text="👨‍💻 المطور", url="https://t.me/aabdulrahmaan")
+    kb.button(text="👨‍💻 المبرمج", url="https://t.me/aabdulrahmaan")
     if is_admin:
         kb.button(text="🔧 لوحة الأدمن", callback_data="admin_panel")
     kb.adjust(1)
@@ -140,8 +140,8 @@ async def start(msg: Message):
 {decor("مرحبا بك")} <b>{msg.from_user.first_name}</b> {STAR}
 
 {PIN} بوت اشتراكات النشر التلقائي
-{PIN} اشتراك شهري ← 200 ⭐ (2$)
-{PIN} اشتراك سنوي ← 500 ⭐ (5$)
+{PIN} اشتراك شهري ← 200 نجمة (2$)
+{PIN} اشتراك سنوي ← 500 نجمة (5$)
 {ROCKET} @z6yboy {ROCKET}
     """, reply_markup=main_menu(msg.from_user.id == ADMIN_ID))
 

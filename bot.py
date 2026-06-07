@@ -235,6 +235,7 @@ async def successful_payment(msg: Message):
 
 async def main():
     await init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
     print("🚀 البوت المتطور شغال بنجاح!")
     await dp.start_polling(bot)
 

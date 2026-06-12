@@ -1,77 +1,37 @@
 import os
-from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
+from flask import Flask, request
+import telebot
 
-load_dotenv()
+BOT_TOKEN = '8641750572:AAEuK9_V8zUBedx-K0s5HZfTQ4kElVHOfm0'
+POE_KEY = os.environ.get('POE_KEY') # هنضيفه في Railway
 
-TOKEN = "8641750572:AAEuK9_V8zUBedx-K0s5HZfTQ4kElVHOfm0"
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
-active_users = {}
+def ask_ai(text):
+    # API مجاني من Poe: gpt-3.5-turbo
+    url = "https://api.poe.com/bot/gpt-3.5-turbo"
+    headers = {"Authorization": f"Bearer {POE_KEY}"}
+    r = requests.post(url, json={"query": text}, headers=headers)
+    return r.json().get('text', 'حصل خطأ')
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("اهلا! اكتب 'عازف' عشان ابدأ 🎵")
+@bot.message_handler(func=lambda m: True)
+def handle_msg(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    reply = ask_ai(message.text)
+    bot.send_message(message.chat.id, reply)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-    
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
+    return "ok"
 
-    # إيقاف
-    if any(cmd in text.lower() for cmd in ["اسكت", "ميتكلمش تاني", "كفاية", "stop", "quiet"]):
-        if user_id in active_users:
-            active_users.pop(user_id)
-            await update.message.reply_text("تمام، سكتت ✅")
-        return
-
-    # تفعيل
-    if "عازف" in text.lower():
-        active_users[user_id] = True
-        await update.message.reply_text("تمام يا صاحبي، عازف معاك دلوقتي 🎸\nقول اللي في بالك!")
-        return
-
-    # رد AI
-    if user_id in active_users and active_users[user_id]:
-        try:
-            response = requests.post(
-                url="https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "HTTP-Referer": "https://telegram-bot",
-                    "X-Title": "AI Telegram Bot",
-                },
-                json={
-                    "model": "deepseek/deepseek-r1:free",   # ← غيرناه
-                    "messages": [
-                        {"role": "system", "content": "أنت بوت مرح مصري، بيتكلم عامية مصرية طبيعية جداً، رد بذكاء وروح مرحة."},
-                        {"role": "user", "content": text}
-                    ],
-                    "temperature": 0.85,
-                    "max_tokens": 600
-                },
-                timeout=40
-            )
-            
-            if response.status_code != 200:
-                print(f"API Error: {response.status_code} - {response.text}")
-                await update.message.reply_text("في زحمة دلوقتي، جرب بعد دقيقتين 🫡")
-                return
-                
-            reply = response.json()["choices"][0]["message"]["content"]
-            await update.message.reply_text(reply)
-
-        except Exception as e:
-            print(f"Error: {e}")   # هيظهر في Railway Logs
-            await update.message.reply_text("النت بطيء أو في زحمة، جرب تاني شوية!")
+@app.route("/")
+def set_webhook():
+    bot.remove_webhook()
+    bot.set_webhook(url='https://' + os.environ['RAILWAY_STATIC_URL'] + '/' + BOT_TOKEN)
+    return "webhook set"
 
 if __name__ == "__main__":
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    print("البوت شغال بتحسينات جديدة...")
-    app.run_polling()
+    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))

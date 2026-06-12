@@ -1,0 +1,10 @@
+[build]
+builder = "NIXPACKS"
+nixpacksPlan = { providers = ["python"] }
+
+[deploy]
+startCommand = "gunicorn bot:app"
+restartPolicyType = "ON_FAILURE"
+
+[build.env]
+NIXPACKS_PYTHON_VERSION = "3.11"

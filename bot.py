@@ -45,15 +45,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "X-Title": "AI Telegram Bot",
                 },
                 json={
-                    "model": "google/gemini-flash-1.5:free",   # ← غيرناه
+                    "model": "deepseek/deepseek-r1:free",   # ← غيرناه
                     "messages": [
-                        {"role": "system", "content": "أنت بوت مرح مصري، بيتكلم عامية مصرية طبيعية جداً، رد بسرعة وبذكاء."},
+                        {"role": "system", "content": "أنت بوت مرح مصري، بيتكلم عامية مصرية طبيعية جداً، رد بذكاء وروح مرحة."},
                         {"role": "user", "content": text}
                     ],
                     "temperature": 0.85,
                     "max_tokens": 600
                 },
-                timeout=30
+                timeout=40
             )
             
             if response.status_code != 200:
